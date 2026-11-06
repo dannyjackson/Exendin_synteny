@@ -22,7 +22,13 @@ the query is reported.
 Method 'rescue' runs lib_rescue_locus.py (the old repo's 2e) in protein mode, as before.
 Use it only to compare.
 
-Status per model: 'ok' if it has the hormone-domain motif and covers >= --min-cover of the
+Hormone domain: the old repo's motif [HY][ASG][DEQ][AGP][ATVIGSM]F[TSI] (fitted to the
+Heloderma exendins), else a relaxed one, [HY][ASGE][DEQ][AGP].[FYLI], which squamate GCGL
+and diverged copies need; domain_start says '(relaxed)' when only that matched. Residues
+before the first Met (within --trim-to-met) are cut: they come from a query whose model
+starts upstream of the start codon.
+
+Status per model: 'ok' if it has a hormone domain and covers >= --min-cover of the
 query; otherwise the failing checks (no_hormone_motif, low_cover_X, length_N aa,
 internal_stop, not_collinear).
 
@@ -44,7 +50,19 @@ sys.path.insert(0, HERE)
 import lib_exendin_names as N  # noqa: E402
 
 RESCUE = os.path.join(HERE, "lib_rescue_locus.py")
-MOTIF = re.compile(r"[HY][ASG][DEQ][AGP][ATVIGSM]F[TSI]")      # as in 2f / 2d
+MOTIF = re.compile(r"[HY][ASG][DEQ][AGP][ATVIGSM]F[TSI]")      # as in 2f / 2d (fitted to Heloderma)
+# across squamates positions 5-7 vary (GCGL YSEGTLAS, PhrGui Ex4 YSEADLGS, ShiCro HSDGTYTS);
+# His/Tyr, positions 2-4 and a hydrophobic residue at 6 stay conserved
+MOTIF_RELAXED = re.compile(r"[HY][ASGE][DEQ][AGP].[FYLI]")
+
+
+def find_domain(prot):
+    """(match, 'strict'|'relaxed') for the hormone-domain start, or (None, '')."""
+    m = MOTIF.search(prot)
+    if m:
+        return m, "strict"
+    m = MOTIF_RELAXED.search(prot)
+    return (m, "relaxed") if m else (None, "")
 _B, _AA = "TCAG", "FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG"
 CODE = {a + b + c: _AA[16 * i + 4 * j + k]
         for i, a in enumerate(_B) for j, b in enumerate(_B) for k, c in enumerate(_B)}
@@ -137,6 +155,8 @@ def main():
     ap.add_argument("--query-table", help="query_table.tsv from 4a (fallback query of the same group)")
     ap.add_argument("--method", choices=["hsp", "rescue"], default="hsp")
     ap.add_argument("--min-cover", type=float, default=0.7, help="query coverage for status ok")
+    ap.add_argument("--trim-to-met", type=int, default=20,
+                    help="cut residues before the first Met if it lies within this many residues (0 = never)")
     ap.add_argument("--flank", type=int, default=2000, help="rescue method only")
     ap.add_argument("--min-identity", type=float, default=30.0, help="rescue method only")
     ap.add_argument("--evalue", default="1e-2", help="rescue method only")
@@ -183,7 +203,7 @@ def main():
                     except RuntimeError as e:
                         last_err = e; continue
                     p_, c_, n_, cov_, col_, note_ = mod
-                    key = (MOTIF.search(p_) is not None, cov_ >= a.min_cover, 60 <= len(p_) <= 150,
+                    key = (find_domain(p_)[0] is not None, cov_ >= a.min_cover, 60 <= len(p_) <= 150,
                            col_, cov_, len(p_))
                     if best is None or key > best[0]:
                         best = (key, x, mod)
@@ -213,8 +233,11 @@ def main():
             rows.append([name, q, a.method, 0, 0, "0.00", 0, "", f"failed: {str(e)[:80]}"])
             N.warn(f"{name}: no model: {e}")
             continue
-        m = MOTIF.search(prot)
-        dom = f"{prot[m.start()]}@{m.start() + 1}" if m else "none"
+        if a.trim_to_met and prot and not prot.startswith("M") and "M" in prot[:a.trim_to_met]:
+            k = prot.index("M")                # residues before the start Met come from the query's own
+            prot, cds = prot[k:], cds[3 * k:]  # upstream N-terminus, not from this gene
+        m, how = find_domain(prot)
+        dom = f"{prot[m.start()]}@{m.start() + 1}{'' if how == 'strict' else ' (relaxed)'}" if m else "none"
         st_ = []
         if not m:
             st_.append("no_hormone_motif")
