@@ -178,3 +178,104 @@ python3 ${SCRIPTDIR}/4f_plot_curated_synteny.py --species-table ../species.tsv \
   - One here but missing from step 3 is a copy TOGA2 did not project as an ortholog.
   - A colour that differs between figures is a naming conflict between the annotation and
     the reciprocal search; `4a`'s duplicate warnings list them.
+
+### Add chicken outgroup
+
+```
+cd ${WORK}
+printf 'GalGal\tGallus_gallus\tGCF_016699485.2\t\t\tpinned\toutgroup, not on the tree\n' >> species.tsv
+bash ${SCRIPTDIR}/1b_download_genomes.sh species.tsv 2>&1 | tee download.log     # fetches only what is missing
+
+cd synteny_ncbi
+python3 ${SCRIPTDIR}/2a_ncbi_exendin_loci.py --species-table ../species.tsv --genomedir ${GENOMEDIR} --outdir ncbi_loci 2> ncbi_loci.log
+grep GalGal ncbi_loci.log
+python3 ${SCRIPTDIR}/2b_plot_ncbi_synteny.py --loci ncbi_loci/ncbi_loci.tsv --species-tree ${SPTREE} \
+    --inset GalGal --inset-title "Chicken (not on the tree)" \
+    --svg ncbi_synteny.svg --png ncbi_synteny.png --layout ncbi_synteny.tsv 2> ncbi_synteny.log
+
+cd ${WORK}/reciprocal_blast
+SPECIES_TABLE=../species.tsv GENOMEDIR=${GENOMEDIR} QUERYDIR=queries OUT=forward THREADS=8 \
+    bash ${SCRIPTDIR}/4b_forward_tblastn.sh GalGal
+```
+#### Rerun 4b on chicken
+```
+cd ${WORK}/reciprocal_blast
+ls ${GENOMEDIR}/GalGal_GCF_016699485.2/ncbi_dataset/data/GCF_016699485.2/   # needs *_genomic.fna (1b)
+
+SPECIES_TABLE=../species.tsv GENOMEDIR=${GENOMEDIR} QUERYDIR=queries OUT=forward THREADS=8 \
+    bash ${SCRIPTDIR}/4b_forward_tblastn.sh GalGal
+
+rm -rf loci_GalGal
+```
+#### Rerun 4c on chicken
+```
+cd ${WORK}/reciprocal_blast
+awk -F'\t' 'NR==1 || $1=="GalGal"' ../species.tsv > species_GalGal.tsv
+
+python3 ${SCRIPTDIR}/4c_call_loci.py --species-table species_GalGal.tsv --forward-dir forward \
+    --queries queries/forward_queries.faa --query-table queries/query_table.tsv \
+    --boundary-queries queries/boundary_queries.faa --outdir loci_GalGal 2> loci_GalGal.log
+cat loci_GalGal.log
+
+for T in forward_loci forward_scores boundary_hits; do
+  grep -q '^GalGal' loci/$T.tsv 2>/dev/null && echo "!! GalGal already in loci/$T.tsv" \
+    || tail -n +2 loci_GalGal/$T.tsv >> loci/$T.tsv
+done
+mv loci_GalGal/scan/GalGal loci/scan/ && rm -rf loci_GalGal species_GalGal.tsv
+```
+#### Rerun 4d, 4e
+```
+# classify
+python3 ${SCRIPTDIR}/4d_reciprocal_classify.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
+    --loci-dir loci --queries-dir queries --threads 8 --outdir reciprocal 2> reciprocal.log
+cat reciprocal.log
+column -t reciprocal/summary.tsv
+```
+python3 ${SCRIPTDIR}/4f_plot_curated_synteny.py --species-table ../species.tsv \
+    --loci reciprocal/reciprocal_loci.tsv --boundaries-used reciprocal/boundaries_used.tsv \
+    --species-tree ${SPTREE} \
+    --svg curated_synteny.svg --png curated_synteny.png --layout curated_synteny.tsv --inset GalGal
+
+##### with medium-confidence loci too (labels end in '?')
+python3 ${SCRIPTDIR}/4f_plot_curated_synteny.py --species-table ../species.tsv \
+    --loci reciprocal/reciprocal_loci.tsv --boundaries-used reciprocal/boundaries_used.tsv \
+    --species-tree ${SPTREE} --confidence high,medium \
+    --svg curated_synteny.all.svg --png curated_synteny.all.png --inset GalGal
+  
+## 7. Gene tree of the curated set
+```
+mkdir -p tree
+python3 ${SCRIPTDIR}/4g_tree_inputs.py --curated reciprocal/curated_loci.tsv --models-dir models \
+    --outgroup-species GalGal --outdir tree 2> tree/tree_inputs.log
+cat tree/tree_inputs.log
+OG=$(cat tree/outgroup.txt)
+IQTREE=$(command -v iqtree3 || command -v iqtree2 || command -v iqtree)
+
+cd tree
+seqkit fx2tab -n -l tree_aa.fa | sort -k2,2n | sed -n '1p;$p'      # shortest and longest tip
+mafft --localpair --maxiterate 1000 tree_aa.fa > exendin_aa.aln.fa
+$IQTREE -s exendin_aa.aln.fa -m MFP -B 1000 -alrt 1000 -T AUTO ${OG:+-o $OG} --prefix exendin_aa
+grep "Best-fit model according to" exendin_aa.iqtree
+
+if [[ -n "$OG" ]]; then cp exendin_aa.treefile exendin_aa.rooted.nwk
+else python3 ${SCRIPTDIR}/lib_midpoint_root.py exendin_aa.treefile > exendin_aa.rooted.nwk; fi
+
+python3 ${SCRIPTDIR}/4h_draw_tree.py --tree exendin_aa.rooted.nwk --groups groups.tsv ${OG:+--outgroup $OG} \
+    --title "Curated exendin-family genes (reciprocal BLAST), ${OG:+rooted on $OG}${OG:-midpoint-rooted}" \
+    --png exendin_aa.png > exendin_aa.svg
+cd ..
+```
+- **Tips.** `tree/tips.tsv` lists every curated locus, whether it is in the tree, and why not.
+  By default the tree takes only 4e models with status `ok` (hormone-domain motif, 60–150
+  aa) and no disabled copies. Override with `--keep-flagged`, `--include-disabled`, or
+  `--exclude NAME,...`, e.g. after looking at the alignment.
+- **Root.** Chicken GCGL (`--outgroup-species GalGal`) when it passed 4d/4e; otherwise
+  midpoint. With one outgroup sequence the root is placed on its branch by construction: it
+  orients the tree, it does not test where the duplications happened. To test that, add GCGL
+  orthologs from several vertebrates, as described in the old `2_exendin_origin.md` step 5.
+- **Reading it.** Tip colours are the name groups of the synteny figures, so a tip whose
+  colour disagrees with its clade is a naming conflict to trace (see `rev_best` in
+  `reciprocal_loci.tsv`). Node labels are SH-aLRT/UFBoot; trust a node at ≥80 / ≥95. Bold =
+  *Heloderma*.
+- **Optional codon tree.** Same steps as the old `4_toga2_exendin_tree.md` step 3: MACSE on
+  `tree/tree_cds.fa`, then `$IQTREE -st CODON` on the exported codon alignment.
