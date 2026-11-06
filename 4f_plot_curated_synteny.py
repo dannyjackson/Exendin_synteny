@@ -41,6 +41,7 @@ def main():
     ap.add_argument("--title", default="Exendin-family genes between SLC4A8 and AQP5 "
                                        "(curated reciprocal-BLAST orthologs and paralogs)")
     S.add_common_args(ap)
+    N.add_split_arg(ap)
     a = ap.parse_args()
 
     conf, keep = set(a.confidence.split(",")), set(a.placements.split(","))
