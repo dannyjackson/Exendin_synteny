@@ -1,0 +1,13 @@
+# Accessions fixed by hand. 1a_make_species_table.py uses these instead of asking NCBI.
+# A genome analysed with TOGA2 must be pinned to the SAME assembly TOGA2 used, or the
+# step-2 and step-3 plots are not comparable (HelCha: TOGA2 ran on the JANEZZ contigs).
+# code: 3+3 letters of Genus_species (matches TOGA2 query names and the tree-tip rule of the
+# synteny engine). Add a row for every TOGA2 query whose code does not follow that rule.
+code	species	accession	note
+HelSus	Heloderma_suspectum	GCF_057233095.1	Wilson-lab HelSus, isolate Gila_16-S; RefSeq annotation; same material as the TOGA2 reference
+HelCha	Heloderma_charlesbogerti	GCA_026122225.1	JANEZZ assembly TOGA2 used; no NCBI annotation
+AnoCar	Anolis_carolinensis	GCF_035594765.1	used in the old copy-number survey (3a)
+CanAsp	Candoia_aspera	GCF_035149785.1	used in the old copy-number survey (3a)
+PogVit	Pogona_vitticeps	GCF_051106095.1	used in the old copy-number survey (3a)
+EubMac	Eublepharis_macularius	GCF_028583425.1	used in the old copy-number survey (3a); 3 annotated exendins
+HemCap	Hemicordylus_capensis	GCF_027244095.1	used in the old copy-number survey; 1 annotated exendin, 3 unannotated loci

@@ -1,0 +1,12 @@
+name: exendin_synteny_env
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - ncbi-datasets-cli
+  - samtools
+  - seqkit
+  - blast
+  - librsvg
+  - unzip
