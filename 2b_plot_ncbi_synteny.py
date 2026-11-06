@@ -42,6 +42,7 @@ def main():
     ap.add_argument("--boundary-names", default="SLC4A8,AQP5", help="as in 2a --boundaries, left one first")
     ap.add_argument("--title", default="Exendin-family genes between SLC4A8 and AQP5 (NCBI annotations)")
     S.add_common_args(ap)
+    N.add_split_arg(ap)
     a = ap.parse_args()
 
     keep = set(a.placements.split(","))

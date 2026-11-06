@@ -23,13 +23,6 @@ mkdir -p synteny_ncbi synteny_toga2 reciprocal_blast
 ```
 
 ## Software
-The old `exendin_env` already has everything this pipeline needs except an SVG-to-PNG
-converter. If it exists, add one and reuse it:
-```
-source myconda
-mamba install -n exendin_env -c conda-forge librsvg      # provides rsvg-convert
-```
-Otherwise create it from scratch (same as the old repo, plus `librsvg`):
 ```
 source myconda
 mamba create -n exendin_env -c conda-forge -c bioconda --strict-channel-priority \
