@@ -119,14 +119,59 @@ def load_engine():
     return S
 
 
+def add_split_arg(ap):
+    ap.add_argument("--max-gap-kb", type=float, default=1000.0,
+                    help="split a contig's track wherever two neighbouring features are further apart "
+                         "than this (e.g. boundary genes tens of Mb apart after a rearrangement); "
+                         "0 = never split")
+
+
+def split_distant(contigs, max_gap_kb):
+    """Break each contig into separate tracks at gaps > max_gap_kb between features.
+
+    One track spans from its first to its last feature, and the axis of the whole figure is
+    the longest track, so two features far apart on one contig (AnoSag: SLC4A8 and AQP5 57 Mb
+    apart, nothing between) squash every other species. Pieces are named
+    '<contig> @<start Mb>' so the layout table still says where they are.
+    """
+    if not max_gap_kb:
+        return contigs
+    gap = max_gap_kb * 1000
+    for q, cq in contigs.items():
+        for c in list(cq):
+            fs = sorted(cq[c], key=lambda f: f["start"])
+            pieces, cur, end = [], [], None
+            for f in fs:
+                if cur and f["start"] - end > gap:
+                    pieces.append(cur); cur = []
+                cur.append(f); end = f["end"] if len(cur) == 1 else max(end, f["end"])
+            if cur:
+                pieces.append(cur)
+            if len(pieces) < 2:
+                continue
+            del cq[c]
+            for p in pieces:
+                name = f"{c} @{p[0]['start'] / 1e6:.1f}Mb"
+                for f in p:
+                    f["chrom"] = name
+                cq[name] = p
+            info(f"{q}: {c} split into {len(pieces)} tracks (gap > {max_gap_kb:g} kb between "
+                 + ", ".join(f"{p[-1]['name']}" + " .. " + f"{pieces[i + 1][0]['name']}"
+                             for i, p in enumerate(pieces[:-1])) + ")")
+    return contigs
+
+
 def finish(S, a, contigs, queries, bnames, title, note, legend_extra=(), empty_reason=None):
     """engine.finish() with fixed colours per group and a reason for empty species.
+
+    Also splits tracks at large gaps first (split_distant, --max-gap-kb).
 
     The engine colours groups by PALETTE[i] in sorted order and labels empty species
     'nothing found'. Both are set here by wrapping the engine's own functions for one
     call, so lib_synteny_engine.py stays a verbatim copy of the old 4d script.
     """
     empty_reason = empty_reason or {}
+    split_distant(contigs, getattr(a, "max_gap_kb", 1000.0))
     orig_render, orig_build = S.render, S.build_tracks
 
     def render(tracks, tree, **kw):
