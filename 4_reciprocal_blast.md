@@ -148,6 +148,9 @@ python3 ${SCRIPTDIR}/4e_build_models.py --species-table ../species.tsv --genomed
     --curated reciprocal/curated_loci.tsv --queries queries/forward_queries.faa \
     --outdir models 2> models.log
 column -t models/models.tsv
+
+
+
 ```
 - **Method.** Each locus is rebuilt by the old repo's `2e_rescue_locus.py`, copied unchanged
   as `lib_rescue_locus.py`. Its best forward query of the same group is spliced over the
@@ -156,6 +159,12 @@ column -t models/models.tsv
   from 84–113 aa) needs a look at its `<name>.exons.tsv`, exactly as in the old step-2 QC.
 - **Output.** `models/curated_aa.fa` and `models/curated_cds.fa` are ready for the old repo's
   alignment and tree steps.
+- **Hormone domain.** A model counts as having one if it matches the old motif
+  `[HY][ASG][DEQ][AGP][ATVIGSM]F[TSI]` or a relaxed one, `[HY][ASGE][DEQ][AGP].[FYLI]`;
+  squamate GCGL and diverged copies need the relaxed one (GCGL `YSEGTLAS`, PhrGui Ex4
+  `YSEADLGS`, ShiCro `HSDGTYTS`). `domain_start` says `(relaxed)` when only that matched.
+  Residues before the first Met (within `--trim-to-met`, 20) are cut: they come from a query
+  that starts upstream of the start codon.
 
 ## 6. Plot
 ```

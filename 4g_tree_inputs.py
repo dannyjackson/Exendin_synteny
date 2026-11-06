@@ -11,7 +11,8 @@ curated_aa.fa, curated_cds.fa). A locus is a tip if its model is usable:
   - --exclude NAME,NAME drops tips by hand (e.g. after looking at the alignment).
 Every left-out locus is listed with its reason, so nothing disappears silently.
 
-Outgroup: the tips of --outgroup-species (e.g. GalGal: chicken GCGL, the single-copy
+Outgroup: --outgroup-fasta (protein sequences added as tips, e.g. chicken's NCBI-annotated
+GCGL, when the genome model of the outgroup is partial), or else the tips of --outgroup-species (e.g. GalGal: chicken GCGL, the single-copy
 ancestral gene of the array outside squamates, as zebra finch GCGL was in the old repo).
 With one outgroup sequence the root is placed on that branch by construction: the
 outgroup orients the tree, it does not test where the duplications happened. Without one,
@@ -39,6 +40,10 @@ def main():
     ap.add_argument("--curated", required=True, help="curated_loci.tsv from 4d")
     ap.add_argument("--models-dir", required=True, help="4e output (models.tsv, curated_aa.fa, curated_cds.fa)")
     ap.add_argument("--outgroup-species", default="", help="comma-separated species codes, e.g. GalGal")
+    ap.add_argument("--outgroup-fasta",
+                    help="protein FASTA of outgroup tips added as they are (e.g. chicken's NCBI GCGL protein), "
+                         "used instead of --outgroup-species models; no CDS, so not in tree_cds.fa")
+    ap.add_argument("--outgroup-group", default="outgroup", help="colour group of --outgroup-fasta tips")
     ap.add_argument("--keep-flagged", action="store_true", help="keep models whose 4e status is not ok")
     ap.add_argument("--include-disabled", action="store_true", help="keep disabled copies")
     ap.add_argument("--exclude", default="", help="comma-separated tip names to leave out")
@@ -75,7 +80,16 @@ def main():
         if not why:
             keep.append(r)
 
-    og = [r["name"] for r in keep if r["species"] in og_sp]
+    extra = []
+    if a.outgroup_fasta:
+        for n, (h, seq) in N.read_fasta(a.outgroup_fasta).items():
+            if n in {r["name"] for r in keep}:
+                N.warn(f"--outgroup-fasta {n}: same name as a curated tip; skipped"); continue
+            extra.append((n, seq.rstrip("*")))
+        if og_sp:
+            N.info("--outgroup-fasta given: --outgroup-species tips stay in as ordinary tips")
+        og_sp = set()
+    og = [n for n, _ in extra] + [r["name"] for r in keep if r["species"] in og_sp]
     if og_sp and not og:
         N.warn(f"no included tip from --outgroup-species {','.join(sorted(og_sp))}: midpoint-root instead")
     with open(os.path.join(a.outdir, "tree_aa.fa"), "w") as fa, \
@@ -87,6 +101,9 @@ def main():
             if r["name"] in cds:
                 fc.write(f">{r['name']}\n{cds[r['name']]}\n")
             fg.write(f"{r['name']}\t{r['group']}\n")
+        for n, seq in extra:
+            fa.write(f">{n}\n{seq}\n")
+            fg.write(f"{n}\t{a.outgroup_group}\n")
     open(os.path.join(a.outdir, "outgroup.txt"), "w").write(",".join(og) + "\n")
     with open(os.path.join(a.outdir, "tips.tsv"), "w") as fh:
         fh.write("name\tspecies\tgroup\tclass\taa_len\tincluded\treason\n")
