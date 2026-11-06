@@ -3,8 +3,10 @@
 Protein and CDS for every curated locus (4d curated_loci.tsv), for the gene tree (4g/4h).
 
 Default method 'hsp': the model is built from the forward tblastn alignments that
-defined the locus (4c keeps them in loci/scan/<code>/<contig>.blast.tsv). For the locus's
-best forward query of its own name group:
+defined the locus (4c keeps them in loci/scan/<code>/<contig>.blast.tsv). A model is
+built from EACH query of the locus's own name group that hit it (any query, if none of
+its group did), and the best is kept: hormone-domain motif first, then coverage >=
+--min-cover, then 60-150 aa, then collinear, then coverage. For each query:
   - its HSPs inside the locus are taken best-first, skipping any that would add nothing;
   - they are put in query order, and where two HSPs overlap in query coordinates at an
     exon junction, the later one is trimmed so each query position is used once;
@@ -31,7 +33,8 @@ Usage
 
 Writes to --outdir:
   curated_aa.fa, curated_cds.fa   all models, named as in curated_loci.tsv
-  models.tsv                      name query method hsps q_cover aa_len domain_start status
+  models.tsv                      name query method queries_tried hsps q_cover aa_len domain_start status
+                                  (query = the one whose model was kept)
 """
 import argparse, csv, os, re, subprocess, sys
 from collections import defaultdict
@@ -157,7 +160,7 @@ def main():
         files = N.find_genome_files(a.genomedir, code, table[code]["accession"])
         lo, hi, st = int(r["g_start"]), int(r["g_end"]), r["strand"]
         prot = cds = ""
-        nh, cover, collinear, note = 0, 0.0, True, ""
+        nh, cover, collinear, note, tried = 0, 0.0, True, "", 1
         try:
             if a.method == "hsp":
                 key = (code, r["contig"])
@@ -167,13 +170,27 @@ def main():
                 byq = defaultdict(list)
                 for h in here:
                     byq[h["q"]].append(h)
-                if q not in byq:                      # fall back to the best query of the same group
-                    same = {x: hs for x, hs in byq.items() if qgroup.get(x) == r["group"]} or byq
-                    q = max(same, key=lambda x: sum(h["bits"] for h in same[x])) if same else q
-                if q not in byq:
+                if not byq:
                     raise RuntimeError("no forward HSPs at this locus (re-run 4c?)")
-                prot, cds, nh, cover, collinear, note = hsp_model(byq[q], files["fasta"], r["contig"],
-                                                                  len(qs[q][1]) if q in qs else 0)
+                # try every query of the locus's own group (then any query) and keep the best
+                # model: a long but faulty query (e.g. a mis-annotated first exon) can win on
+                # bitscore and still give a worse model than a correct shorter one
+                same = [x for x in byq if qgroup.get(x) == r["group"]] or list(byq)
+                best = None
+                for x in same:
+                    try:
+                        mod = hsp_model(byq[x], files["fasta"], r["contig"], len(qs[x][1]) if x in qs else 0)
+                    except RuntimeError as e:
+                        last_err = e; continue
+                    p_, c_, n_, cov_, col_, note_ = mod
+                    key = (MOTIF.search(p_) is not None, cov_ >= a.min_cover, 60 <= len(p_) <= 150,
+                           col_, cov_, len(p_))
+                    if best is None or key > best[0]:
+                        best = (key, x, mod)
+                if best is None:
+                    raise last_err
+                _, q, (prot, cds, nh, cover, collinear, note) = best
+                tried = len(same)
             else:
                 if files["fasta"] not in cache:
                     cache[files["fasta"]] = {l.split("\t")[0]: int(l.split("\t")[1])
@@ -193,7 +210,7 @@ def main():
                 nh = sum(1 for _ in open(os.path.join(a.outdir, f"{name}.exons.tsv"))) - 1
                 cover = len(prot) / len(qs[q][1]) if q in qs else 0
         except Exception as e:                          # noqa: BLE001
-            rows.append([name, q, a.method, 0, "0.00", 0, "", f"failed: {str(e)[:80]}"])
+            rows.append([name, q, a.method, 0, 0, "0.00", 0, "", f"failed: {str(e)[:80]}"])
             N.warn(f"{name}: no model: {e}")
             continue
         m = MOTIF.search(prot)
@@ -211,11 +228,11 @@ def main():
             st_.append("not_collinear")
         if note:
             st_.append(note)
-        rows.append([name, q, a.method, nh, f"{cover:.2f}", len(prot), dom, ";".join(st_) or "ok"])
+        rows.append([name, q, a.method, tried, nh, f"{cover:.2f}", len(prot), dom, ";".join(st_) or "ok"])
         aa_out.append((name, prot)); cds_out.append((name, cds))
 
     with open(os.path.join(a.outdir, "models.tsv"), "w") as fh:
-        fh.write("name\tquery\tmethod\thsps\tq_cover\taa_len\tdomain_start\tstatus\n")
+        fh.write("name\tquery\tmethod\tqueries_tried\thsps\tq_cover\taa_len\tdomain_start\tstatus\n")
         for row in rows:
             fh.write("\t".join(map(str, row)) + "\n")
     for fn, recs in (("curated_aa.fa", aa_out), ("curated_cds.fa", cds_out)):
