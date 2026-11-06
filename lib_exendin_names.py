@@ -126,6 +126,11 @@ def add_split_arg(ap):
                          "after a rearrangement); 0 = never")
     ap.add_argument("--break-kb", type=float, default=20.0,
                     help="width a shortened stretch is drawn at, in kb of the axis")
+    ap.add_argument("--inset", default="",
+                    help="comma-separated species codes drawn in a box at the top right instead of in the "
+                         "tree-ordered panel (outgroups not on the tree, e.g. GalGal)")
+    ap.add_argument("--inset-title", default="Not on the tree", help="heading of the --inset box")
+    ap.add_argument("--inset-width", type=int, default=640, help="width of the --inset box (px)")
 
 
 def compress_gaps(tracks, max_gap_kb, break_kb):
@@ -193,6 +198,48 @@ def html_escape(x):
     return html.escape(str(x))
 
 
+def _track_boxes(tracks, tree, width, maxspan):
+    """(x0, x1, y0, y1) drawn by each track in the engine's render (same geometry as _draw_breaks)."""
+    tree_w = 170 if tree else 0
+    plot_x0 = 15 + tree_w + 70 + 175
+    plot_w = width - plot_x0 - 25
+    out = []
+    for t in tracks:
+        top = t["y"] - (t["h"] - 24)
+        if t["feats"]:
+            x1 = plot_x0 + t["span"] / maxspan * plot_w
+        else:
+            x1 = plot_x0 + 6 * len(t.get("why", ""))          # italic 'no ...' text
+        out.append((plot_x0 - 5, x1 + 30, top, t["y"] + 22))   # +30 for labels/arrow tips
+    return out
+
+
+def _compose_inset(main_svg, inset_svg, main_boxes, width, box_w, heading):
+    """Put inset_svg in a framed box at the top right of main_svg; push the panel down if they would overlap."""
+    import re as _re
+    ih = int(float(_re.search(r'height="([\d.]+)"', inset_svg.split("\n", 1)[0]).group(1)))
+    trim = 52                                             # the nested figure's empty title/note band
+    bw, bh = box_w, ih - trim + 22
+    bx, by = width - bw - 12, 52                          # below the title and the note line
+    clash = any(x1 > bx and x0 < bx + bw and y1 > by and y0 < by + bh for x0, x1, y0, y1 in main_boxes)
+    lines = main_svg.split("\n")
+    head, body, tail = lines[:4], lines[4:-1], lines[-1:]
+    H = float(_re.search(r'height="([\d.]+)"', lines[0]).group(1))
+    dy = 0
+    if clash:
+        dy = bh + 12
+        head[0] = _re.sub(r'height="[\d.]+"', f'height="{H + dy:.0f}"', head[0], count=1)
+        body = [f'<g transform="translate(0,{dy})">'] + body + ["</g>"]
+        info(f"inset box would overlap the panel's top rows: panel moved down {dy} px")
+    nested = _re.sub(r"^<svg ", f'<svg x="{bx + 1}" y="{by + 18 - trim}" ', inset_svg, count=1)
+    # drop the nested figure's empty title/note band (it starts drawing tracks at y=70)
+    nested = nested.replace('<rect width="100%" height="100%" fill="white"/>', "", 1)
+    box = [f'<rect x="{bx}" y="{by}" width="{bw}" height="{bh}" fill="white" stroke="#888" stroke-width="1" rx="4"/>',
+           f'<text x="{bx + 8}" y="{by + 14}" font-size="11" font-weight="bold" fill="#444">{html_escape(heading)}</text>',
+           nested]
+    return "\n".join(head + body + box + tail)
+
+
 def finish(S, a, contigs, queries, bnames, title, note, legend_extra=(), empty_reason=None):
     """engine.finish() with fixed colours per group and a reason for empty species.
 
@@ -200,18 +247,18 @@ def finish(S, a, contigs, queries, bnames, title, note, legend_extra=(), empty_r
     'nothing found'. Both are set here by wrapping the engine's own functions for one
     call, so lib_synteny_engine.py stays a verbatim copy of the old 4d script. Long empty
     stretches within a contig are shortened and marked // (compress_gaps, --max-gap-kb).
+    Species in --inset are drawn in a box at the top right, not in the tree-ordered panel.
     """
     empty_reason = empty_reason or {}
+    inset = [q for q in getattr(a, "inset", "").split(",") if q]
+    for q in inset:
+        if q not in queries:
+            warn(f"--inset {q}: not a species of this figure; ignored")
+    inset = [q for q in inset if q in queries]
+    main_q = [q for q in queries if q not in inset]
     orig_render, orig_build = S.render, S.build_tracks
 
-    def render(tracks, tree, **kw):
-        groups = sorted({f["group"] for t in tracks for f in t["feats"] if f["kind"] == "exendin"})
-        cm = colour_map(groups)
-        S.PALETTE = [cm[g] for g in groups] or S.PALETTE
-        svg, lay, span = orig_render(tracks, tree, **kw)
-        return _draw_breaks(svg, tracks, tree, kw.get("width", 1400), span), lay, span
-
-    def build_tracks(*args, **kw):
+    def build(*args, **kw):
         tracks = orig_build(*args, **kw)
         compress_gaps(tracks, getattr(a, "max_gap_kb", 1000.0), getattr(a, "break_kb", 20.0))
         for t in tracks:
@@ -219,9 +266,33 @@ def finish(S, a, contigs, queries, bnames, title, note, legend_extra=(), empty_r
                 t["why"] = empty_reason[t["query"]]
         return tracks
 
-    S.render, S.build_tracks = render, build_tracks
+    def palette(tracks):
+        groups = sorted({f["group"] for t in tracks for f in t["feats"] if f["kind"] == "exendin"})
+        cm = colour_map(groups)
+        S.PALETTE = [cm[g] for g in groups] or S.PALETTE
+
+    def render(tracks, tree, **kw):
+        palette(tracks)
+        svg, lay, span = orig_render(tracks, tree, **kw)
+        svg = _draw_breaks(svg, tracks, tree, kw.get("width", 1400), span)
+        if inset:
+            it = build(contigs, inset, bnames, a.reference_query, a.clip_kb)
+            rank = {q: i for i, q in enumerate(inset)}
+            it.sort(key=lambda t: (rank[t["query"]], not t["main"], t["chrom"]))
+            palette(it)
+            ikw = dict(kw, width=a.inset_width, legend_extra=())
+            isvg, ilay, ispan = orig_render(it, None, title="", note="", **{k: v for k, v in ikw.items()
+                                                                            if k not in ("title", "note")})
+            isvg = _draw_breaks(isvg, it, None, a.inset_width, ispan)
+            svg = _compose_inset(svg, isvg, _track_boxes(tracks, tree, kw.get("width", 1400), span),
+                                 kw.get("width", 1400), a.inset_width, a.inset_title)
+            lay = lay + ilay
+            info(f"inset: {', '.join(inset)} ({len(it)} track(s), own scale {ispan / 1000:.0f} kb)")
+        return svg, lay, span
+
+    S.render, S.build_tracks = render, build
     try:
-        S.finish(a, contigs, queries, bnames, title, note, legend_extra=legend_extra)
+        S.finish(a, contigs, main_q, bnames, title, note, legend_extra=legend_extra)
     finally:
         S.render, S.build_tracks = orig_render, orig_build
 

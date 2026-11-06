@@ -11,3 +11,4 @@ CanAsp	Candoia_aspera	GCF_035149785.1	used in the old copy-number survey (3a)
 PogVit	Pogona_vitticeps	GCF_051106095.1	used in the old copy-number survey (3a)
 EubMac	Eublepharis_macularius	GCF_028583425.1	used in the old copy-number survey (3a); 3 annotated exendins
 HemCap	Hemicordylus_capensis	GCF_027244095.1	used in the old copy-number survey; 1 annotated exendin, 3 unannotated loci
+GalGal	Gallus_gallus	GCF_016699485.2	chicken, bGalGal1.mat.broiler.GRCg7b, RefSeq annotation release 106; outgroup not on the tree (plot with --inset GalGal)

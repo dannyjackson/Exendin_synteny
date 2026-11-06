@@ -10,6 +10,8 @@ colour. The colours are fixed per name, so they are the same in all three figure
 
 Run the set-up block of `0_Environment_management.md` first.
 ```
+cd ${SCRIPTDIR}
+git pull
 cd ${WORK}/synteny_ncbi
 ```
 
