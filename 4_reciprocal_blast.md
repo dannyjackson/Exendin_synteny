@@ -81,6 +81,37 @@ python3 ${SCRIPTDIR}/4c_call_loci.py --species-table ../species.tsv --forward-di
 cat loci.log
 cut -f1-9 loci/forward_loci.tsv | column -t | less -S
 cut -f1-8 loci/boundary_hits.tsv | column -t
+
+# check the output
+cd ${WORK}/reciprocal_blast
+# which queries make the Heloderma loci
+awk -F'\t' '$2=="HelSus"||$2=="HelCha"{n[$2"\t"$10]++} END{for(k in n) print n[k]"\t"k}' loci/forward_loci.tsv | sort -k1,1nr | head
+# what kind of loci they are (expect almost all N_term_only / domain_only)
+awk -F'\t' '$2=="HelSus"{split($9,s,";"); n[s[1]]++} END{for(k in n) print n[k], k}' loci/forward_loci.tsv
+# length of every forward query: the precursors are 84-113 aa
+awk -F'\t' 'NR>1 && ($6<70 || $6>150)' queries/query_table.tsv | cut -f1-6
+
+
+# filter out faulty m-RNA annotation
+BAD=HelCha__toga2__Ex3_4__1
+mkdir -p queries_v2 forward_v2
+seqkit grep -v -p $BAD queries/forward_queries.faa > queries_v2/forward_queries.faa
+seqkit grep -v -p $BAD queries/reverse_db.faa      > queries_v2/reverse_db.faa
+cp queries/boundary_queries.faa queries_v2/
+for T in query_table reverse_table; do awk -F'\t' -v B=$BAD '$1!=B' queries/$T.tsv > queries_v2/$T.tsv; done
+for F in forward/*.tblastn.tsv; do awk -F'\t' -v B=$BAD '$2!=B' $F > forward_v2/$(basename $F); done
+
+python3 ${SCRIPTDIR}/4c_call_loci.py --species-table ../species.tsv --forward-dir forward_v2 \
+    --queries queries_v2/forward_queries.faa --query-table queries_v2/query_table.tsv \
+    --boundary-queries queries_v2/boundary_queries.faa --outdir loci_v2 2> loci_v2.log
+awk -F'\t' 'NR>1{n[$2]++} END{for(s in n) print s, n[s]}' loci_v2/forward_loci.tsv | sort -k2,2nr | head
+
+cd ${WORK}/reciprocal_blast
+rm -rf forward loci queries reciprocal reciprocal.log
+mv forward_v2 forward
+mv loci_v2 loci
+mv queries_v2 queries
+mv loci_v2.log loci.log
 ```
 - **Positive control.** HelSus must recover the loci the old copy-number survey found: ANC,
   the Frag1 copy, exendin-2, exendin-4 and the two distal copies. If any are missing, lower
@@ -92,6 +123,7 @@ cut -f1-8 loci/boundary_hits.tsv | column -t
 
 ## 4. Reverse blastx and classification
 ```
+# classify
 python3 ${SCRIPTDIR}/4d_reciprocal_classify.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
     --loci-dir loci --queries-dir queries --threads 8 --outdir reciprocal 2> reciprocal.log
 cat reciprocal.log
