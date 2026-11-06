@@ -209,6 +209,14 @@ def main():
                          f"(no pair on one contig; {near_count(b)} family gene(s) within {a.max_dist_kb:g} kb)")
                 else:
                     info(f"{code}: no {name} candidate in the annotation")
+        if not pairs and len(chosen) == 2:
+            b0, b1 = chosen[n0], chosen[n1]
+            if b0["contig"] == b1["contig"]:
+                d = max(b0["end"], b1["end"]) - min(b0["start"], b1["start"])
+                warn(f"{code}: {n0} and {n1} are on the same contig ({b0['contig']}) but {d / 1e6:.1f} Mb apart "
+                     f"(> --max-interval-kb {a.max_interval_kb:g}): the interval is broken (rearrangement, "
+                     f"or a mis-assigned gene). Each boundary is treated on its own; 2b draws them on "
+                     f"one track with a // break")
         for name, b in chosen.items():
             if not b["exact"]:
                 warn(f"{code}: {name} chosen by description, not symbol: {b['symbol']} '{b['description']}'")
