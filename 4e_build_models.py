@@ -195,7 +195,7 @@ def fill_gaps(chosen, fasta, contig, qseq, clen, a, tmpdir):
     return out
 
 
-def hsp_model(hits, fasta, contig, qlen):
+def hsp_model(hits, fasta, contig, qlen, qseq=None):
     """(protein, cds, n_hsps, cover, collinear, note) from one query's HSPs at a locus."""
     chosen = select(hits)
     minus = chosen[0]["strand"] == "-"
@@ -204,13 +204,38 @@ def hsp_model(hits, fasta, contig, qlen):
     collinear = pos == sorted(pos, reverse=minus)
     regs = [f"{contig}:{h['lo']}-{h['hi']}" for h in chosen]
     nts = faidx(fasta, regs, minus)
-    prot, cds, last_q, covered = [], [], 0, set()
-    for h, nt in zip(chosen, nts):
-        for qpos, res, k in columns(h):
-            if qpos <= last_q:
-                continue                               # trimmed: already used by an earlier HSP
-            prot.append(res); cds.append(nt[3 * k:3 * k + 3]); covered.add(qpos)
-        last_q = max(last_q, h["qe"])
+    # where two HSPs overlap in the query (an exon junction, or a hit running on into the
+    # intron), keep each query position from the HSP that matches it: the cut is placed where
+    # the two together match the query best, a stop codon counting -3 against its HSP
+    cols = [columns(h) for h in chosen]
+
+    def val(res, qpos):
+        if res == "*":
+            return -3
+        return 1 if qseq and 0 < qpos <= len(qseq) and qseq[qpos - 1] == res else 0
+    bounds = [[0, 10 ** 9] for _ in chosen]
+    for i in range(len(chosen) - 1):
+        A, B = chosen[i], chosen[i + 1]
+        lo_i = bounds[i][0]
+        if A["qe"] < B["qs"]:
+            cut = A["qe"]
+        elif qseq is None:
+            cut = A["qe"]                              # no query sequence: the earlier HSP wins
+        else:
+            best = None
+            for c in range(max(B["qs"] - 1, lo_i), A["qe"] + 1):
+                sc = sum(val(r, q) for q, r, _ in cols[i] if B["qs"] <= q <= c) + \
+                     sum(val(r, q) for q, r, _ in cols[i + 1] if c < q <= A["qe"])
+                if best is None or sc > best[0]:
+                    best = (sc, c)
+            cut = best[1] if best else A["qe"]
+        bounds[i][1] = cut
+        bounds[i + 1][0] = max(cut, lo_i)
+    prot, cds, covered = [], [], set()
+    for (lo_b, hi_b), cl, nt in zip(bounds, cols, nts):
+        for qpos, res, k in cl:
+            if lo_b < qpos <= hi_b:
+                prot.append(res); cds.append(nt[3 * k:3 * k + 3]); covered.add(qpos)
     prot, cds = "".join(prot), "".join(cds)
     note = ""
     if translate(cds) != prot.replace("X", "") and translate(cds).replace("*", "X") != prot.replace("*", "X"):
@@ -289,7 +314,7 @@ def main():
                 for x in same:
                     ql = len(qs[x][1]) if x in qs else 0
                     try:
-                        mod = hsp_model(byq[x], files["fasta"], r["contig"], ql)
+                        mod = hsp_model(byq[x], files["fasta"], r["contig"], ql, qs[x][1] if x in qs else None)
                     except RuntimeError as e:
                         last_err = e; continue
                     nfill = 0
@@ -298,7 +323,8 @@ def main():
                                           clen_cache[(code, r["contig"])], a, a.outdir)
                         if extra:
                             try:
-                                mod2 = hsp_model(byq[x] + extra, files["fasta"], r["contig"], ql)
+                                mod2 = hsp_model(byq[x] + extra, files["fasta"], r["contig"], ql,
+                                                 qs[x][1] if x in qs else None)
                                 if rank(mod2) >= rank(mod):
                                     mod, nfill = mod2, len(extra)
                             except RuntimeError:
