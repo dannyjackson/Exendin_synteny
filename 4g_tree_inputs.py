@@ -27,6 +27,11 @@ Writes to --outdir:
   groups.tsv                tip<TAB>group (name group, as in the synteny plots)
   outgroup.txt              comma-separated outgroup tips (empty: midpoint-root)
   tips.tsv                  every curated locus: included yes/no and why
+  name_sources.tsv          (with --reverse-table) tip, code and origin of its name: the
+                            protein its name group was taken from, i.e. its best reverse hit
+                            in 4d. R = reference RefSeq proteome, N = NCBI annotation of
+                            another species, T = TOGA2 projection, P = published precursor,
+                            O = outgroup sequence from --outgroup-fasta
 """
 import argparse, csv, os, sys
 
@@ -44,6 +49,9 @@ def main():
                     help="protein FASTA of outgroup tips added as they are (e.g. chicken's NCBI GCGL protein), "
                          "used instead of --outgroup-species models; no CDS, so not in tree_cds.fa")
     ap.add_argument("--outgroup-group", default="outgroup", help="colour group of --outgroup-fasta tips")
+    ap.add_argument("--reverse-table",
+                    help="reverse_table.tsv from 4a: writes name_sources.tsv (where each tip's name came from), "
+                         "which 4h --sources prints as a code after each tip")
     ap.add_argument("--keep-flagged", action="store_true", help="keep models whose 4e status is not ok")
     ap.add_argument("--include-disabled", action="store_true", help="keep disabled copies")
     ap.add_argument("--exclude", default="", help="comma-separated tip names to leave out")
@@ -109,6 +117,24 @@ def main():
         fh.write("name\tspecies\tgroup\tclass\taa_len\tincluded\treason\n")
         for row in rows:
             fh.write("\t".join(map(str, row)) + "\n")
+
+    if a.reverse_table:
+        with open(a.reverse_table) as fh:
+            rev = {r["id"]: r for r in csv.DictReader(fh, delimiter="\t")}
+        code_of = {"proteome": "R", "ncbi": "N", "toga2": "T", "published": "P"}
+        with open(os.path.join(a.outdir, "name_sources.tsv"), "w") as fh:
+            fh.write("tip\tcode\tsource\tspecies\tprotein\tdescription\n")
+            for r in keep:
+                x = rev.get(r["rev_best"])
+                if x:
+                    fh.write("\t".join([r["name"], code_of.get(x["source"], "?"), x["source"], x["species"],
+                                        r["rev_best"], x["description"]]) + "\n")
+                else:
+                    fh.write(f"{r['name']}\t?\tunknown\t-\t{r['rev_best']}\t-\n")
+                    N.warn(f"{r['name']}: best reverse hit {r['rev_best']} not in {a.reverse_table}")
+            for n, _ in extra:
+                fh.write(f"{n}\tO\toutgroup\t-\t{n}\tadded with --outgroup-fasta\n")
+        N.info(f"name sources written to {os.path.join(a.outdir, 'name_sources.tsv')}")
 
     by = {}
     for r in keep:
