@@ -1,32 +1,28 @@
-# Reciprocal BLAST: a curated set of exendin orthologs and paralogs
-**Why.** Steps 2 and 3 show what the annotations say. The array is systematically
-under-annotated, though: in HelSus four of six copies had no gene model, and HemCap's GFF
-shows one exendin where a scan found four loci. NCBI and TOGA2 also name the same gene
-differently. This step asks the genomes directly, with every exendin from steps 2–3 as a
-query, and keeps a locus only if it searches back to an exendin-family protein.
+# Reciprocal BLAST: curated exendin-family genes, their models, synteny and gene tree
+**Why.** Steps 2–3 show what the annotations say, but the array is under-annotated (HelSus:
+four of six copies had no gene model; HemCap's GFF has one exendin where a scan found four
+loci) and NCBI and TOGA2 name the same gene differently. Here every exendin from steps 2–3
+searches every genome, and a locus is kept only if it searches back to an exendin-family
+protein.
 
 **Method**
-1. **Forward.** tblastn of all exendin-family proteins (NCBI, TOGA2 and the published
-   precursors) plus the HelSus SLC4A8 and AQP5 proteins against every whole genome.
-2. **Loci.** Hits are clustered into loci by the old repo's `2f_scan_interval.py`, copied
-   unchanged as `lib_scan_interval.py`. Each locus is classified `candidate_gene` (exon 1 and
-   hormone domain both found), `N_term_only` or `domain_only`. Premature stops and the first
-   residue of the hormone domain are checked.
-3. **Reverse.** blastx of each locus against a whole reference proteome (HelSus RefSeq) plus
-   all forward queries. The reference proteome supplies the competitors (proglucagon, GIP,
-   VIP, PACAP, secretin, GHRH): a locus whose best reverse hit is one of them is rejected.
-   Query proteins from the locus's own species are ignored, so a locus is never named just by
-   its own annotation.
-4. **Orthologs and paralogs.**
-   - **Ortholog of group G:** the best reverse hit is a G protein, and this locus is the
-     genome's best forward hit for the G queries (a reciprocal best hit).
-   - **Paralog named after G:** the best reverse hit is a G protein, but another locus is the
-     best forward hit for G.
-   - **High confidence:** reverse margin ≥ 1.2 over the best non-family protein, forward
-     e-value ≤ 1e-5, and a `candidate_gene`. Everything else that passes the reverse test is
-     medium.
-5. **Plot** the high-confidence set in the step-2/3 layout and colours, with SLC4A8/AQP5
-   located by tblastn, so unannotated genomes get boundary genes too.
+| Step | Script | What happens |
+|---|---|---|
+| 1 | `4a` | forward queries (NCBI + TOGA2 + published exendin precursors, deduplicated), the HelSus SLC4A8/AQP5 proteins, and a reverse database (HelSus RefSeq proteome + all queries) |
+| 2 | `4b` | tblastn of all queries against each whole genome |
+| 3 | `4c` | hits → loci with the old interval scanner (`lib_scan_interval.py`); genes split at an intron are joined; boundary genes located |
+| 4 | `4d` | blastx of each locus back to the reverse database → ortholog / paralog / rejected, confidence, placement |
+| 5 | `4e` | protein + CDS model of each curated locus from its tblastn alignments, with a search for exons the genome-wide search missed |
+| 6 | `4f` | synteny figure of the curated set |
+| 7 | `4g`, `4h` | gene tree of every curated gene in the region (+ chicken, + published precursors) |
+
+**Classes** (4d). *Ortholog of group G*: best reverse hit is a G protein and this locus is
+the genome's best forward hit for the G queries (reciprocal best hit). *Paralog*: best
+reverse hit is a G protein, but another locus is the best forward hit for G. *Rejected*: best
+reverse hit is a non-family protein (proglucagon, GIP, VIP, PACAP …). **High confidence**
+(the curated set): reverse margin ≥ 1.2 over the best non-family protein, forward e-value ≤
+1e-5, and both exon 1 and hormone domain found. The names here (`Ex4`, `Ex2p1`, `Ex3_4`) are
+inherited from the annotation of each locus's best reverse hit; step 5 replaces them.
 
 Run the set-up block of `0_Environment_management.md` first.
 ```
@@ -42,282 +38,211 @@ python3 ${SCRIPTDIR}/4a_build_query_set.py \
     --toga2-reference ../synteny_toga2/reference_exendins.tsv \
     --published ${SCRIPTDIR}/4_reference_peptides.fa \
     --reverse-proteome HelSus=${HELSUS_PROT} \
-    --outdir queries 2> queries.log
+    --outdir queries_raw 2> queries.log
 cat queries.log
-cut -f1-6 queries/query_table.tsv | column -t
+awk -F'\t' 'NR>1 && ($6<70 || $6>150)' queries_raw/query_table.tsv | cut -f1-6   # outside 70-150 aa
 ```
-- `4_reference_peptides.fa` is `2_reference_peptides.fa` from the old repo, copied unchanged.
-  Only its `*_precursor` records are used: exendin-2/-3/-4 as queries, and proglucagon as a
-  reverse competitor.
-- **Reverse proteome line.** Check how many proteins in the reference proteome were named
-  exendin / GCGL / proglucagon. If HelSus calls ANC something the grouping does not know,
-  ANC loci will be rejected. Fix `name_group()`, or rename it in a copy of the proteome.
-- **Duplicate warnings.** "identical sequence named X and Y" means NCBI and TOGA2 call the
-  same protein different things. The NCBI (or published) name is kept. Read these warnings:
-  they are the nomenclature conflicts.
-- **More competitors.** Add another proteome (e.g. `--reverse-proteome AnoCar=...`) to
-  strengthen the reverse test in distant taxa.
+- **Log.** How many HelSus proteome proteins were named exendin / GCGL / proglucagon (if
+  GCGL gets a name `name_group()` does not know, GCGL loci are rejected); and "identical
+  sequence named X and Y" warnings, which are the NCBI/TOGA2 naming conflicts (the NCBI or
+  published name is kept).
+- **Remove broken models before the search.** Precursors are 84–113 aa. The 198-aa
+  `HelCha__toga2__Ex3_4__1` is the TOGA2 HelCha exendin-3 model built on the faulty
+  `mRNA-2` isoform; its unsupported first exon is a *Heloderma*-specific repeat that made
+  ~47,000 loci in HelSus and ~35,000 in HelCha. Drop it (and any other query step 3's check
+  shows behaving like it); the published exendin-3 precursor and other species' copies still
+  find the gene. `CanAsp__ncbi__GCGL__1` (161 aa) is long but behaves normally: keep it.
+  ```
+  BAD=HelCha__toga2__Ex3_4__1                       # comma-separated if several
+  mkdir -p queries
+  for F in forward_queries.faa reverse_db.faa; do seqkit grep -v -p ${BAD//,/ -p } queries_raw/$F > queries/$F; done
+  for T in query_table reverse_table; do
+    awk -F'\t' -v B="$BAD" 'BEGIN{split(B,b,","); for(i in b) x[b[i]]=1} !($1 in x)' queries_raw/$T.tsv > queries/$T.tsv
+  done
+  cp queries_raw/boundary_queries.faa queries/
+  ```
+  Everything downstream reads `queries/`. Re-running `4a` writes `queries_raw/` again, so
+  repeat this filter after it.
+- **More competitors** for distant taxa: add `--reverse-proteome AnoCar=...`.
 
 ## 2. Forward tblastn against every genome
-One job per genome. Interactively:
+One job per genome (including chicken). Interactively:
 ```
 export SPECIES_TABLE=../species.tsv GENOMEDIR QUERYDIR=queries OUT=forward THREADS=8
 for C in $(awk -F'\t' 'NR>1 && $3!="NA"{print $1}' ../species.tsv); do bash ${SCRIPTDIR}/4b_forward_tblastn.sh $C; done
 ```
-Or as a Biowulf swarm (makeblastdb plus tblastn is about an hour per squamate genome):
+or as a Biowulf swarm (makeblastdb + tblastn ≈ 1 h per squamate genome):
 ```
 awk -F'\t' -v S=${SCRIPTDIR} -v W=$PWD -v G=${GENOMEDIR} 'NR>1 && $3!="NA"{
   printf "source myconda; mamba activate exendin_env; cd %s; SPECIES_TABLE=../species.tsv GENOMEDIR=%s QUERYDIR=queries OUT=forward THREADS=8 bash %s/4b_forward_tblastn.sh %s\n", W, G, S, $1}' \
   ../species.tsv > forward.swarm
 swarm -f forward.swarm -g 16 -t 8 --time 8:00:00 --logdir swarm_logs
 ```
-Databases go to `${GENOMEDIR}/blastdb` and are reused. Change this with `BLASTDB_DIR`.
+Writes `forward/<code>.tblastn.tsv`. BLAST databases are built once into
+`${GENOMEDIR}/blastdb` (`BLASTDB_DIR`) and reused. Progress of a running job: the last query
+with hits in `forward/<code>.tblastn.tsv.tmp` against the query order in
+`forward/<code>.queries.faa`. A single new species can be run alone and appended in step 3.
 
 ## 3. Call loci
 ```
 python3 ${SCRIPTDIR}/4c_call_loci.py --species-table ../species.tsv --forward-dir forward \
     --queries queries/forward_queries.faa --query-table queries/query_table.tsv \
     --boundary-queries queries/boundary_queries.faa --outdir loci 2> loci.log
-cat loci.log
-cut -f1-9 loci/forward_loci.tsv | column -t | less -S
-cut -f1-8 loci/boundary_hits.tsv | column -t
-
-# check the output
-cd ${WORK}/reciprocal_blast
-# which queries make the Heloderma loci
-awk -F'\t' '$2=="HelSus"||$2=="HelCha"{n[$2"\t"$10]++} END{for(k in n) print n[k]"\t"k}' loci/forward_loci.tsv | sort -k1,1nr | head
-# what kind of loci they are (expect almost all N_term_only / domain_only)
-awk -F'\t' '$2=="HelSus"{split($9,s,";"); n[s[1]]++} END{for(k in n) print n[k], k}' loci/forward_loci.tsv
-# length of every forward query: the precursors are 84-113 aa
-awk -F'\t' 'NR>1 && ($6<70 || $6>150)' queries/query_table.tsv | cut -f1-6
-
-
-# filter out faulty m-RNA annotation
-BAD=HelCha__toga2__Ex3_4__1
-mkdir -p queries_v2 forward_v2
-seqkit grep -v -p $BAD queries/forward_queries.faa > queries_v2/forward_queries.faa
-seqkit grep -v -p $BAD queries/reverse_db.faa      > queries_v2/reverse_db.faa
-cp queries/boundary_queries.faa queries_v2/
-for T in query_table reverse_table; do awk -F'\t' -v B=$BAD '$1!=B' queries/$T.tsv > queries_v2/$T.tsv; done
-for F in forward/*.tblastn.tsv; do awk -F'\t' -v B=$BAD '$2!=B' $F > forward_v2/$(basename $F); done
-
-python3 ${SCRIPTDIR}/4c_call_loci.py --species-table ../species.tsv --forward-dir forward_v2 \
-    --queries queries_v2/forward_queries.faa --query-table queries_v2/query_table.tsv \
-    --boundary-queries queries_v2/boundary_queries.faa --outdir loci_v2 2> loci_v2.log
-awk -F'\t' 'NR>1{n[$2]++} END{for(s in n) print s, n[s]}' loci_v2/forward_loci.tsv | sort -k2,2nr | head
-
-cd ${WORK}/reciprocal_blast
-rm -rf forward loci queries reciprocal reciprocal.log
-mv forward_v2 forward
-mv loci_v2 loci
-mv queries_v2 queries
-mv loci_v2.log loci.log
+grep -v "joined" loci.log
+grep -E "joined|not joined" loci.log
+awk -F'\t' 'NR>1{n[$2]++} END{for(s in n) print s, n[s]}' loci/forward_loci.tsv | sort -k2,2nr | head
+awk -F'\t' 'NR>1{n[$2"\t"$10]++} END{for(k in n) if(n[k]>200) print n[k]"\t"k}' loci/forward_loci.tsv
 ```
-- **Positive control.** HelSus must recover the loci the old copy-number survey found: ANC,
-  the Frag1 copy, exendin-2, exendin-4 and the two distal copies. If any are missing, lower
-  `--min-identity` before trusting an absence elsewhere.
-- **Expected extras.** The forward set also finds proglucagon and its relatives. That is
-  expected; the reverse step removes them.
-- **Boundary hits.** In `boundary_hits.tsv`, the best SLC4A8 / AQP5 cluster should have
-  `query_cov` near 1. Paralogs (SLC4A10, other aquaporins) follow at lower `frac_of_top`.
+- **Loci per species** should be tens (family copies plus their glucagon-superfamily
+  relatives, which step 4 rejects). Thousands in one species = a broken query; the last
+  command names it (best query making >200 loci). Remove it as in step 1 and re-run.
+- **Split genes are joined.** The scanner can call one gene as two loci: the signal-peptide
+  exon (often modelled running on into the intron, with a false stop) and the rest from the
+  hormone domain on (HelSus and HelCha GCGL: two pieces 712 bp apart). Neighbours on one
+  strand within `--merge-kb` (5) are joined when the queries hitting both cover consecutive
+  parts of themselves (the downstream part starts and ends ≥ `--merge-min-offset` (10)
+  residues later). Tandem copies cover the same part twice and stay separate
+  (ElgMul_Ex2p4/p5: "not joined"). Joined loci carry `;merged` in their state.
+- **Positive control.** HelSus must recover the loci of the old copy-number survey (GCGL,
+  the Frag1 copy, exendin-2, exendin-4, the two distal copies). If any are missing, lower
+  `--min-identity` (35) before trusting an absence elsewhere.
+- **Boundaries** (`boundary_hits.tsv`): the best SLC4A8 / AQP5 cluster should have
+  `query_cov` near 1; paralogs (SLC4A10, other aquaporins) follow at lower `frac_of_top`.
+- **Adding one species later** (after its step-2 job): run `4c` with a one-row species
+  table into `loci_<code>`, then append its rows to the three `loci/*.tsv` tables and move
+  `loci_<code>/scan/<code>` into `loci/scan/`.
 
 ## 4. Reverse blastx and classification
 ```
-# classify
 python3 ${SCRIPTDIR}/4d_reciprocal_classify.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
     --loci-dir loci --queries-dir queries --threads 8 --outdir reciprocal 2> reciprocal.log
 cat reciprocal.log
 column -t reciprocal/summary.tsv
 cut -f1,3,8-12,23,25,27,28 reciprocal/reciprocal_loci.tsv | column -t | less -S
 ```
-- **Classes.**
-  - **`rejected`:** the reverse hit names what it is (`rev_best_desc`); expect proglucagon,
-    GIP, VIP etc.
-  - **`paralog`:** `reason` names the locus that is the ortholog for the same group.
-  - **`medium`:** `reason` says which test failed (margin, e-value, or a remnant locus).
-- **Changing the cut-offs.** To try others without re-running blastx, re-run with
-  `--reuse-blastx --min-margin 1.5` (or `--max-evalue`).
-- **`curated_loci.tsv`** is the high-confidence set; the step-4 dataset is this file.
-- **Disabled copies.** `disabled = yes` marks a premature stop, or a hormone domain not
-  starting His/Tyr. These are kept as paralogs, as presence evidence, but should not go into
-  a selection analysis.
+Minutes for a few hundred loci (one blastx per species). Use a new `--outdir` (or delete
+`reciprocal/`) after changing the queries: an existing `reverse_db` is reused.
+- **`rejected`**: `rev_best_desc` says what it is (proglucagon, GIP, VIP …).
+- **`paralog`**: `reason` names the ortholog locus of the same group.
+- **`medium`**: `reason` gives the failed test (margin, e-value, remnant).
+- **Cut-offs** without re-running blastx: `--reuse-blastx --min-margin 1.5` (or `--max-evalue`).
+- **`curated_loci.tsv`** = the high-confidence set used from here on.
+- **`disabled`** = a premature stop, *or* a hormone domain not starting His/Tyr according to
+  the old scanner's strict motif. The second also flags every squamate GCGL (its peptide
+  `YSEGTLAS…` breaks the motif), so `disabled` is not used to filter anything downstream:
+  4e/4g judge stops from the models.
 
 ## 5. Protein and CDS models of the curated loci
 ```
 python3 ${SCRIPTDIR}/4e_build_models.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
-    --curated reciprocal/curated_loci.tsv --queries queries/forward_queries.faa \
-    --outdir models 2> models.log
-column -t models/models.tsv
-
-
-
-```
-- **Method.** Each locus is rebuilt by the old repo's `2e_rescue_locus.py`, copied unchanged
-  as `lib_rescue_locus.py`. Its best forward query of the same group is spliced over the
-  locus, and the longest ORF is reported.
-- **What to check.** Anything with status other than `ok` (no hormone motif, or a length far
-  from 84–113 aa) needs a look at its `<name>.exons.tsv`, exactly as in the old step-2 QC.
-- **Output.** `models/curated_aa.fa` and `models/curated_cds.fa` are ready for the old repo's
-  alignment and tree steps.
-- **Hormone domain.** A model counts as having one if it matches the old motif
-  `[HY][ASG][DEQ][AGP][ATVIGSM]F[TSI]` or a relaxed one, `[HY][ASGE][DEQ][AGP].[FYLI]`;
-  squamate GCGL and diverged copies need the relaxed one (GCGL `YSEGTLAS`, PhrGui Ex4
-  `YSEADLGS`, ShiCro `HSDGTYTS`). `domain_start` says `(relaxed)` when only that matched.
-  Residues before the first Met (within `--trim-to-met`, 20) are cut: they come from a query
-  that starts upstream of the start codon.
-
-## 6. Plot
-```
-python3 ${SCRIPTDIR}/4f_plot_curated_synteny.py --species-table ../species.tsv \
-    --loci reciprocal/reciprocal_loci.tsv --boundaries-used reciprocal/boundaries_used.tsv \
-    --species-tree ${SPTREE} \
-    --svg curated_synteny.svg --png curated_synteny.png --layout curated_synteny.tsv
-
-# with medium-confidence loci too (labels end in '?')
-python3 ${SCRIPTDIR}/4f_plot_curated_synteny.py --species-table ../species.tsv \
-    --loci reciprocal/reciprocal_loci.tsv --boundaries-used reciprocal/boundaries_used.tsv \
-    --species-tree ${SPTREE} --confidence high,medium \
-    --svg curated_synteny.all.svg --png curated_synteny.all.png
-```
-- **Drawing.** Colour = name group of the best reverse hit, with the same colours as steps 2
-  and 3. Filled = ortholog, hollow = paralog, dashed = disabled copy. Labels are the names
-  in `curated_loci.tsv` (`Ex4`, `Ex2p1` …).
-- **Reading the three figures together.**
-  - A locus filled here but missing from step 2 is a gene NCBI did not annotate.
-  - One here but missing from step 3 is a copy TOGA2 did not project as an ortholog.
-  - A colour that differs between figures is a naming conflict between the annotation and
-    the reciprocal search; `4a`'s duplicate warnings list them.
-
-### Add chicken outgroup
-
-```
-cd ${WORK}
-printf 'GalGal\tGallus_gallus\tGCF_016699485.2\t\t\tpinned\toutgroup, not on the tree\n' >> species.tsv
-bash ${SCRIPTDIR}/1b_download_genomes.sh species.tsv 2>&1 | tee download.log     # fetches only what is missing
-
-cd synteny_ncbi
-python3 ${SCRIPTDIR}/2a_ncbi_exendin_loci.py --species-table ../species.tsv --genomedir ${GENOMEDIR} --outdir ncbi_loci 2> ncbi_loci.log
-grep GalGal ncbi_loci.log
-python3 ${SCRIPTDIR}/2b_plot_ncbi_synteny.py --loci ncbi_loci/ncbi_loci.tsv --species-tree ${SPTREE} \
-    --inset GalGal --inset-title "Chicken (not on the tree)" \
-    --svg ncbi_synteny.svg --png ncbi_synteny.png --layout ncbi_synteny.tsv 2> ncbi_synteny.log
-
-cd ${WORK}/reciprocal_blast
-SPECIES_TABLE=../species.tsv GENOMEDIR=${GENOMEDIR} QUERYDIR=queries OUT=forward THREADS=8 \
-    bash ${SCRIPTDIR}/4b_forward_tblastn.sh GalGal
-```
-#### Rerun 4b on chicken
-```
-cd ${WORK}/reciprocal_blast
-ls ${GENOMEDIR}/GalGal_GCF_016699485.2/ncbi_dataset/data/GCF_016699485.2/   # needs *_genomic.fna (1b)
-
-SPECIES_TABLE=../species.tsv GENOMEDIR=${GENOMEDIR} QUERYDIR=queries OUT=forward THREADS=8 \
-    bash ${SCRIPTDIR}/4b_forward_tblastn.sh GalGal
-
-rm -rf loci_GalGal
-```
-#### Rerun 4c on chicken
-```
-cd ${WORK}/reciprocal_blast
-awk -F'\t' 'NR==1 || $1=="GalGal"' ../species.tsv > species_GalGal.tsv
-
-python3 ${SCRIPTDIR}/4c_call_loci.py --species-table species_GalGal.tsv --forward-dir forward \
+    --curated reciprocal/curated_loci.tsv --loci-dir loci \
     --queries queries/forward_queries.faa --query-table queries/query_table.tsv \
-    --boundary-queries queries/boundary_queries.faa --outdir loci_GalGal 2> loci_GalGal.log
-cat loci_GalGal.log
+    --outdir models 2> models.log
+tail -1 models.log
+awk -F'\t' 'NR==1 || $10!="ok"' models/models.tsv | column -t -s$'\t'
+seqkit grep -r -p '^Hel' models/curated_aa.fa        # Heloderma exendins should end ...PPPS
+```
+How a model is built:
+- **From the tblastn alignments**, for every query of the locus's own name group; the best
+  model is kept (hormone domain > coverage ≥ 0.7 > 60–150 aa > collinear > coverage). A
+  long but faulty query can win on bitscore and still give a worse model.
+- **Exon junctions.** Where two hits overlap in the query, the cut is placed where the two
+  together match the query best (a stop counts against its hit), so intron read-through is
+  dropped. The CDS is cut codon by codon under the same alignment and always translates to
+  the protein.
+- **Missing exons.** A short exon cannot pass the genome-wide e-value: the *Heloderma*
+  exendins' ~10-residue last exon (`…GPSSGAPPPS`) was missing from every model, cutting each
+  mature peptide ~30 residues in. Every stretch of ≥ 5 query residues no hit covers is
+  searched again with tblastn in its own small window (≤ `--fill-extend-bp` 10 kb beyond the
+  first/last hit, or between two hits); `filled` counts the exons added. `--no-fill` turns
+  it off.
+- **Hormone domain**: the old motif `[HY][ASG][DEQ][AGP][ATVIGSM]F[TSI]` or the relaxed
+  `[HY][ASGE][DEQ][AGP].[FYLI]` squamate copies need (GCGL `YSEGTLAS`, PhrGui `YSEADLGS`,
+  ShiCro `HSDGTYTS`); `domain_start` says `(relaxed)`. Residues before the first Met (within
+  `--trim-to-met` 20) are cut.
 
-for T in forward_loci forward_scores boundary_hits; do
-  grep -q '^GalGal' loci/$T.tsv 2>/dev/null && echo "!! GalGal already in loci/$T.tsv" \
-    || tail -n +2 loci_GalGal/$T.tsv >> loci/$T.tsv
-done
-mv loci_GalGal/scan/GalGal loci/scan/ && rm -rf loci_GalGal species_GalGal.tsv
-```
-#### Rerun 4d, 4e
-```
-# classify
-python3 ${SCRIPTDIR}/4d_reciprocal_classify.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
-    --loci-dir loci --queries-dir queries --threads 8 --outdir reciprocal 2> reciprocal.log
-cat reciprocal.log
-column -t reciprocal/summary.tsv
+Status other than `ok`: `internal_stop` = pseudogene; `low_cover` / short `length` = remnant
+or diverged end; `no_hormone_motif` = check by eye. `--method rescue` runs the old 2e
+approach (built for cDNA queries; fragments protein-query models) for comparison only.
+
+## 6. Synteny figure of the curated set
 ```
 python3 ${SCRIPTDIR}/4f_plot_curated_synteny.py --species-table ../species.tsv \
     --loci reciprocal/reciprocal_loci.tsv --boundaries-used reciprocal/boundaries_used.tsv \
-    --species-tree ${SPTREE} \
-    --svg curated_synteny.svg --png curated_synteny.png --layout curated_synteny.tsv --inset GalGal
-
-##### with medium-confidence loci too (labels end in '?')
-python3 ${SCRIPTDIR}/4f_plot_curated_synteny.py --species-table ../species.tsv \
-    --loci reciprocal/reciprocal_loci.tsv --boundaries-used reciprocal/boundaries_used.tsv \
-    --species-tree ${SPTREE} --confidence high,medium \
-    --svg curated_synteny.all.svg --png curated_synteny.all.png --inset GalGal
-  
-## 7. Gene tree of the curated set
+    --species-tree ${SPTREE} --top GalGal \
+    --svg curated_synteny.svg --png curated_synteny.png --layout curated_synteny.tsv
 ```
+`--confidence high,medium` adds the medium loci (labels end in `?`). Colour = name group of
+the best reverse hit; filled = ortholog, hollow = paralog, dashed = 4d `disabled` (which
+includes the false GCGL flag of step 4; step 5's named figure draws outlines from the
+models instead). Boundaries are tblastn's, so unannotated genomes have them too.
+Reading the three figures together: a locus here but not in step 2 = not annotated by NCBI;
+not in step 3 = not projected by TOGA2; a colour that differs = a naming conflict (4a's
+duplicate warnings).
 
+## 7. Gene tree
+Every curated gene in the region, plus chicken's NCBI GCGL protein as outgroup and the
+published exendin-2/-3/-4 precursors. Chicken's own genome model is partial (~half the
+precursor) and is the same gene as the outgroup, so it is left out.
+```
 cd ${WORK}/reciprocal_blast
-# chicken's annotated family genes (2a must have been re-run after adding GalGal)
-grep -A1 '^>GalGal_' ../synteny_ncbi/ncbi_loci/ncbi_exendin_aa.fa
-awk -F'\t' '$1=="GalGal" && $2=="exendin"' ../synteny_ncbi/ncbi_loci/ncbi_loci.tsv | cut -f4-8,14,15
-
 seqkit grep -r -p '^GalGal_' ../synteny_ncbi/ncbi_loci/ncbi_exendin_aa.fa > tree_outgroup.faa
-grep '>' tree_outgroup.faa          # keep only the interval GCGL if there is more than one
+grep '>' tree_outgroup.faa                          # keep one record: the interval GCGL
+GG=$(awk -F'\t' '$3=="GalGal"{print $1}' reciprocal/curated_loci.tsv | paste -sd,)   # chicken's curated locus
+echo "chicken locus left out: ${GG:-none}"
 
-mkdir -p tree
-python3 ${SCRIPTDIR}/4g_tree_inputs.py --curated reciprocal/curated_loci.tsv --models-dir models \
-    --outgroup-fasta tree_outgroup.faa --outgroup-group "GCGL (glucagon-like)" --outdir tree 2> tree/tree_inputs.log
-cat tree/tree_inputs.log
-
-OG=$(cat tree/outgroup.txt)
-IQTREE=$(command -v iqtree3 || command -v iqtree2 || command -v iqtree)
-
-cd tree
-seqkit fx2tab -n -l tree_aa.fa | sort -k2,2n | sed -n '1p;$p'      # shortest and longest tip
-mafft --localpair --maxiterate 1000 tree_aa.fa > exendin_aa.aln.fa
-$IQTREE -s exendin_aa.aln.fa -m MFP -B 1000 -alrt 1000 -T AUTO ${OG:+-o $OG} --prefix exendin_aa
-grep "Best-fit model according to" exendin_aa.iqtree
-
-if [[ -n "$OG" ]]; then cp exendin_aa.treefile exendin_aa.rooted.nwk
-else python3 ${SCRIPTDIR}/lib_midpoint_root.py exendin_aa.treefile > exendin_aa.rooted.nwk; fi
-
-python3 ${SCRIPTDIR}/4h_draw_tree.py --tree exendin_aa.rooted.nwk --groups groups.tsv ${OG:+--outgroup $OG} \
-    --title "Curated exendin-family genes (reciprocal BLAST), ${OG:+rooted on $OG}${OG:-midpoint-rooted}" \
-    --png exendin_aa.png > exendin_aa.svg
-cd ..
-```
-- **Tips.** Every curated exendin-family locus in the SLC4A8–AQP5 region is a tip, remnants,
-  flagged models and pseudogenes included. Stop codons are masked (`*` → `X`, stop codons →
-  `NNN` in the CDS). Only loci with no 4e model, or placed `elsewhere`, are left out;
-  `tree/tips.tsv` lists every locus and why. `--exclude NAME,...` drops single tips;
-  `--exclude-disabled` and `--exclude-flagged` restore the strict set.
-- **Root.** Chicken GCGL (`--outgroup-species GalGal`) when it passed 4d/4e; otherwise
-  midpoint. With one outgroup sequence the root is placed on its branch by construction: it
-  orients the tree, it does not test where the duplications happened. To test that, add GCGL
-  orthologs from several vertebrates, as described in the old `2_exendin_origin.md` step 5.
-- **Reading it.** Tip colours are the name groups of the synteny figures, so a tip whose
-  colour disagrees with its clade is a naming conflict to trace (see `rev_best` in
-  `reciprocal_loci.tsv`). Node labels are SH-aLRT/UFBoot; trust a node at ≥80 / ≥95. Bold =
-  *Heloderma*.
-- **Optional codon tree.** Same steps as the old `4_toga2_exendin_tree.md` step 3: MACSE on
-  `tree/tree_cds.fa`, then `$IQTREE -st CODON` on the exported codon alignment.
-
-# Plot the source of the name of each gene
-
-```
-
-cd ${WORK}/reciprocal_blast
 mkdir -p tree
 python3 ${SCRIPTDIR}/4g_tree_inputs.py --curated reciprocal/curated_loci.tsv --models-dir models \
     --outgroup-fasta tree_outgroup.faa --outgroup-group "GCGL (glucagon-like)" \
     --published ${SCRIPTDIR}/4_reference_peptides.fa \
-    --reverse-table queries/reverse_table.tsv --exclude GalGal_Ex3 --outdir tree 2> tree/tree_inputs.log
-grep published tree/tree_inputs.log
-python3 ${SCRIPTDIR}/4g_tree_inputs.py --curated reciprocal/curated_loci.tsv --models-dir models \
-    --outgroup-fasta tree_outgroup.faa --outgroup-group "GCGL (glucagon-like)" \
-    --reverse-table queries/reverse_table.tsv --outdir tree 2> tree/tree_inputs.log
+    --reverse-table queries/reverse_table.tsv ${GG:+--exclude $GG} --outdir tree 2> tree/tree_inputs.log
+cat tree/tree_inputs.log
+awk -F'\t' '$6=="yes" && $7!="-"' tree/tips.tsv     # tips kept with masked stops or flagged models
+
 OG=$(cat tree/outgroup.txt)
+IQTREE=$(command -v iqtree3 || command -v iqtree2 || command -v iqtree)
 cd tree
-python3 ${SCRIPTDIR}/4h_draw_tree.py --tree exendin_aa.rooted.nwk --groups groups.tsv --sources name_sources.tsv \
-    ${OG:+--outgroup $OG} --title "Curated exendin-family genes (reciprocal BLAST)" \
-    --png exendin_aa.png > exendin_aa.svg
+mafft --localpair --maxiterate 1000 tree_aa.fa > exendin_aa.aln.fa
+$IQTREE -s exendin_aa.aln.fa -m MFP -B 1000 -alrt 1000 -T AUTO ${OG:+-o $OG} --prefix exendin_aa -redo
+if [[ -n "$OG" ]]; then cp exendin_aa.treefile exendin_aa.rooted.nwk
+else python3 ${SCRIPTDIR}/lib_midpoint_root.py exendin_aa.treefile > exendin_aa.rooted.nwk; fi
+python3 ${SCRIPTDIR}/4h_draw_tree.py --tree exendin_aa.rooted.nwk --groups groups.tsv \
+    --sources name_sources.tsv ${OG:+--outgroup $OG} \
+    --title "Curated exendin-family genes (reciprocal BLAST)" --png exendin_aa.png > exendin_aa.svg
 cd ..
 ```
+- **Tips.** Every curated locus in the SLC4A8–AQP5 region (`--placements`): remnants,
+  flagged models and pseudogenes included. Stops are masked (`*` → `X`; stop codons → `NNN`
+  in the CDS). Left out only: loci with no model, `elsewhere` loci, and `--exclude`.
+  `tree/tips.tsv` lists every locus and why. `--exclude-disabled --exclude-flagged` give the
+  strict set (e.g. for selection analyses). Single-exon remnants (20–60 aa) sit on long,
+  weakly supported branches.
+- **Published precursors** `Published_EX2/3/4` (P04204, P20394, P26349); exendin-1 is
+  published only as a mature peptide and is not added. A *Heloderma* model identical to one
+  sits with it as an identical sequence (IQ-TREE keeps both).
+- **Root** on chicken GCGL, by construction: it orients the tree, it does not test where
+  the duplications happened (that needs GCGL from several vertebrates; old
+  `2_exendin_origin.md` step 5).
+- **Drawing.** Colour = inherited name group; `[R]/[N]/[T]/[P]/[O]` after each tip = where
+  that name came from (reference RefSeq proteome / another species' NCBI annotation / TOGA2 /
+  published / outgroup); hover for the protein. Supports SH-aLRT/UFBoot (trust ≥ 80 / 95);
+  bold = *Heloderma*.
+
+### Codon tree (optional)
+The protein alignment back-translated, so gaps never split a codon. Outgroup and published
+tips have no genomic CDS: drop them and midpoint-root.
+```
+cd tree
+seqkit grep -v -r -p '^Published_' -f <(tr ',' '\n' < outgroup.txt) exendin_aa.aln.fa > exendin_aa.aln.noextra.fa
+pal2nal.pl exendin_aa.aln.noextra.fa tree_cds.fa -output fasta -nogap > exendin_codon.aln.fa 2> pal2nal.log
+cat pal2nal.log                                     # a mismatch names the tip to fix
+$IQTREE -s exendin_codon.aln.fa -st CODON -m MFP -B 1000 -alrt 1000 -T AUTO --prefix exendin_codon -redo
+python3 ${SCRIPTDIR}/lib_midpoint_root.py exendin_codon.treefile > exendin_codon.rooted.nwk
+python3 ${SCRIPTDIR}/4h_draw_tree.py --tree exendin_codon.rooted.nwk --groups groups.tsv \
+    --sources name_sources.tsv --title "Curated exendin-family genes, codon model, midpoint-rooted" \
+    --png exendin_codon.png > exendin_codon.svg
+cd ..
+```
+`-nogap` drops gapped columns; remove it to keep them as missing data. Trust deep nodes from
+the protein tree and relationships among recent copies (e.g. within *Heloderma*) from the
+codon tree.

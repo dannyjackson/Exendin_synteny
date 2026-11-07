@@ -51,6 +51,7 @@ def main():
     ap.add_argument("--species-table", help="species.tsv; species not in the TOGA2 run get an empty row")
     ap.add_argument("--title", default="Exendin-family genes between SLC4A8 and AQP5 (TOGA2, HelSus reference)")
     S.add_common_args(ap)
+    N.add_split_arg(ap)
     a = ap.parse_args()
 
     ref_group = N.toga2_reference_groups(a.reference_table, a.name_map)

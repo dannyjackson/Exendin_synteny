@@ -1,59 +1,49 @@
 # Download files
 Run the set-up block of `0_Environment_management.md` first.
 
-## TOGA2 annotations
-**Already downloaded on 2026-10-23.** Copy this section unchanged from
-`1_download_files.md` ("## TOGA2" and its Readme) of
-[Exendin_evolution](https://github.com/dannyjackson/Exendin_evolution). It fetches
-Elise Lauterbur's TOGA2 run with rclone into `${TOGADIR}` (25 GB, UCSC browser and Nextflow
-files excluded). Steps 3 and 4 use only `${TOGADIR}/target_HelSus`.
-
-The HelSus EviAnn annotation that TOGA2 projected is also needed (step 3); it is the file
-the old repo used:
+## 1. TOGA2 run
+**Already downloaded (2026-10-23).** Copy the "## TOGA2" section and its Readme unchanged
+from `1_download_files.md` of
+[Exendin_evolution](https://github.com/dannyjackson/Exendin_evolution): rclone of Elise
+Lauterbur's run into `${TOGADIR}` (25 GB; UCSC browser and Nextflow files excluded). Steps 3
+and 4 use `${TOGADIR}/target_HelSus`, and step 3 also uses the HelSus EviAnn annotation TOGA2
+projected:
 ```
-HELSUS_EVIANN_GFF=${PROJDIR}/datasets/genomes/Heloderma_suspectum/Heloderma_suspectum.final.reference.gff3
+ls -d ${TOGADIR}/target_HelSus
 ls -l ${HELSUS_EVIANN_GFF}
 ```
 
-## Species table
-One row per taxon: every tip of the Cactus tree, every TOGA2 query, and any outgroup you add
-with `--extra`. Accessions come from `1_species_pinned.tsv` where listed, otherwise from NCBI
-(RefSeq annotated > annotated > reference > best contig N50). Every NCBI candidate is
-listed in `species_candidates.tsv`.
+## 2. Species table
+One row per taxon: every Cactus-tree tip, every TOGA2 query, and the outgroups given with
+`--extra`. Chicken (`GalGal`) is the reference row of every figure and the root of the gene
+trees. Accessions come from `1_species_pinned.tsv` where listed (chicken:
+`GCF_016699485.2`, bGalGal1.mat.broiler.GRCg7b), otherwise from NCBI: RefSeq annotated >
+annotated > reference > best contig N50.
 ```
 cd ${WORK}
 python3 ${SCRIPTDIR}/1a_make_species_table.py \
-    --tree ${SPTREE} \
-    --toga2-run ${TOGADIR}/target_HelSus \
-    --pinned ${SCRIPTDIR}/1_species_pinned.tsv \
+    --tree ${SPTREE} --toga2-run ${TOGADIR}/target_HelSus \
+    --pinned ${SCRIPTDIR}/1_species_pinned.tsv --extra Gallus_gallus \
     --out species.tsv --candidates species_candidates.tsv 2> species.log
 cat species.log
+cut -f1 species.tsv | sort | uniq -d           # must print nothing: a duplicate row draws a species twice
 ```
-Check:
-- **Warnings about TOGA2 queries that are not pinned.** For those species the NCBI choice
-  may not be the assembly TOGA2 ran on, so contig names will differ between the step-2 and
-  step-3 figures. Look up the assembly each TOGA2 query used, and add a row for it to
-  `1_species_pinned.tsv` (and commit it), then re-run.
-- **Tree tips that are not `Genus_species`** are skipped unless pinned. A pinned row also
-  supplies the species name.
-- **Rows with `NA`** have no NCBI assembly. They stay in the table, so the plots show them
-  as empty rows instead of leaving them out without saying so.
-- To add outgroups such as zebra finch (whose GCGL gene sits between AQP5 and SLC4A8), use
-  `--extra Taeniopygia_guttata,Gallus_gallus`. They are drawn below the tree.
+- **TOGA2 queries that are not pinned** are warned about: NCBI's choice may not be the
+  assembly TOGA2 ran on, and then contig names differ between steps 2 and 3. Pin the
+  TOGA2 assembly in `1_species_pinned.tsv` and re-run.
+- **Tree tips that are not `Genus_species`** are skipped unless pinned (the pinned row
+  supplies the species name).
+- **`NA` rows** have no NCBI assembly; they stay, so figures show them as empty rows.
+- `species.tsv` is the one list every later step reads; edit it by hand if a choice is
+  wrong. Every NCBI candidate is in `species_candidates.tsv`.
 
-`species.tsv` is the single list every later step reads. Edit it by hand if a choice is
-wrong.
-
-## Genomes, annotations and proteins
+## 3. Genomes, annotations, proteins
 ```
 bash ${SCRIPTDIR}/1b_download_genomes.sh species.tsv 2>&1 | tee download.log
 ```
-This downloads `genome,gff3,protein,seq-report` per accession into
-`${GENOMEDIR}/<code>_<accession>/`, the layout the old `3a_scan_species.sh` used. So
-genomes the old repo already fetched (`HelSus_GCF_057233095.1`, `HelCha_GCA_026122225.1`,
-`AnoCar_...` etc.) are reused, and only a missing GFF or protein file is fetched. The
-summary at the end lists which species have an NCBI annotation. Unannotated assemblies
-(e.g. HelCha) are drawn as "no NCBI annotation" in step 2, and still searched in step 4.
-
-On Biowulf, run it inside `tmux` or an `sinteractive` session: a dozen squamate genomes is
-tens of GB.
+Downloads `genome,gff3,protein,seq-report` per accession into
+`${GENOMEDIR}/<code>_<accession>/` (the old `3a_scan_species.sh` layout, so its genomes are
+reused and only a missing GFF or protein file is fetched), and indexes each FASTA. The
+summary lists which species have an NCBI annotation; unannotated assemblies (e.g. HelCha)
+are empty rows in step 2 and are still searched in step 4. Tens of GB: run in `tmux` or
+`sinteractive`.
