@@ -253,10 +253,20 @@ python3 ${SCRIPTDIR}/4f_plot_curated_synteny.py --species-table ../species.tsv \
   
 ## 7. Gene tree of the curated set
 ```
+
+cd ${WORK}/reciprocal_blast
+# chicken's annotated family genes (2a must have been re-run after adding GalGal)
+grep -A1 '^>GalGal_' ../synteny_ncbi/ncbi_loci/ncbi_exendin_aa.fa
+awk -F'\t' '$1=="GalGal" && $2=="exendin"' ../synteny_ncbi/ncbi_loci/ncbi_loci.tsv | cut -f4-8,14,15
+
+seqkit grep -r -p '^GalGal_' ../synteny_ncbi/ncbi_loci/ncbi_exendin_aa.fa > tree_outgroup.faa
+grep '>' tree_outgroup.faa          # keep only the interval GCGL if there is more than one
+
 mkdir -p tree
 python3 ${SCRIPTDIR}/4g_tree_inputs.py --curated reciprocal/curated_loci.tsv --models-dir models \
-    --outgroup-species GalGal --outdir tree 2> tree/tree_inputs.log
+    --outgroup-fasta tree_outgroup.faa --outgroup-group "GCGL (glucagon-like)" --outdir tree 2> tree/tree_inputs.log
 cat tree/tree_inputs.log
+
 OG=$(cat tree/outgroup.txt)
 IQTREE=$(command -v iqtree3 || command -v iqtree2 || command -v iqtree)
 
@@ -288,3 +298,15 @@ cd ..
   *Heloderma*.
 - **Optional codon tree.** Same steps as the old `4_toga2_exendin_tree.md` step 3: MACSE on
   `tree/tree_cds.fa`, then `$IQTREE -st CODON` on the exported codon alignment.
+
+# Find the source of the name of each gene
+
+```
+cd ${WORK}/reciprocal_blast
+# the locus: its group, class and best reverse hit
+awk -F'\t' 'NR==1||$3=="PogVit"' reciprocal/reciprocal_loci.tsv | cut -f1,8,9,20-23
+# where that protein came from (replace with the rev_best ID)
+grep -F 'REV_BEST_ID' queries/reverse_table.tsv
+# if it is a toga2 query: the reference text that named it
+cut -f1,2,8 ../synteny_toga2/reference_exendins.tsv
+```
