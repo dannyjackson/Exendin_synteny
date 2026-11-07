@@ -19,6 +19,17 @@ old 2e approach, which is built for cDNA queries) shifts the frame and gives fra
 Residues the query does not align to (diverged ends) are not in the model; coverage of
 the query is reported.
 
+Missing exons. A short exon cannot pass the forward search's e-value against a whole
+genome: the Heloderma exendins' ~10-residue, Pro-rich last exon (...GPSSGAPPPS) was missing
+from every model, which cut each mature peptide ~30 residues in and pushed exendin-1/-2/-3
+below 5a's 80% identity although every residue present matched. So for each model, every
+stretch of >= --fill-min-gap query residues that no HSP covers (a missing first or last
+exon, or a gap between HSPs) is searched with tblastn in its own small window: up to
+--fill-extend-bp beyond the first/last HSP, or between the two HSPs around an internal gap.
+The best hit on the gene's strand (>= --fill-min-bits) is added and the model rebuilt, and
+the filled model is kept only if it ranks at least as well as the unfilled one. The
+'filled' column of models.tsv counts the HSPs added. --no-fill turns this off.
+
 Method 'rescue' runs lib_rescue_locus.py (the old repo's 2e) in protein mode, as before.
 Use it only to compare.
 
@@ -39,7 +50,7 @@ Usage
 
 Writes to --outdir:
   curated_aa.fa, curated_cds.fa   all models, named as in curated_loci.tsv
-  models.tsv                      name query method queries_tried hsps q_cover aa_len domain_start status
+  models.tsv                      name query method queries_tried hsps filled q_cover aa_len domain_start status
                                   (query = the one whose model was kept)
 """
 import argparse, csv, os, re, subprocess, sys
@@ -116,15 +127,77 @@ def faidx(fasta, regions, minus):
     return ["".join(s) for s in seqs]
 
 
-def hsp_model(hits, fasta, contig, qlen):
-    """(protein, cds, n_hsps, cover, collinear, note) from one query's HSPs at a locus."""
+def select(hits):
+    """HSPs best-first, skipping any wholly inside a better one; returned in query order."""
     chosen = []
     for h in sorted(hits, key=lambda h: -h["bits"]):
         used = set(range(h["qs"], h["qe"] + 1))
         if any(used <= set(range(c["qs"], c["qe"] + 1)) for c in chosen):
-            continue                                   # wholly inside a better HSP
+            continue
         chosen.append(h)
-    chosen.sort(key=lambda h: h["qs"])
+    return sorted(chosen, key=lambda h: h["qs"])
+
+
+def fill_gaps(chosen, fasta, contig, qseq, clen, a, tmpdir):
+    """Search the parts of the query no HSP covers, each in its own small genomic window.
+
+    A short exon (the ~10-residue, Pro-rich last exon of the exendin precursors) cannot
+    reach a useful e-value against a whole genome, so the genome-wide forward search
+    misses it; against the few kb where it must be, it can. Windows, in gene orientation:
+    leading gap = up to --fill-extend-bp upstream of the first HSP; trailing gap = the same
+    downstream of the last; internal gap = between the two HSPs around it.
+    Returns HSP dicts in the forward-hit format (contig coordinates).
+    """
+    qlen, minus = len(qseq), chosen[0]["strand"] == "-"
+    first, last, ext = chosen[0], chosen[-1], a.fill_extend_bp
+    gaps = []
+    if first["qs"] - 1 >= a.fill_min_gap:
+        win = (first["hi"] + 1, first["hi"] + ext) if minus else (first["lo"] - ext, first["lo"] - 1)
+        gaps.append((1, first["qs"] - 1, win))
+    if qlen - last["qe"] >= a.fill_min_gap:
+        win = (last["lo"] - ext, last["lo"] - 1) if minus else (last["hi"] + 1, last["hi"] + ext)
+        gaps.append((last["qe"] + 1, qlen, win))
+    for p, n in zip(chosen, chosen[1:]):
+        if n["qs"] - p["qe"] - 1 >= a.fill_min_gap:
+            win = (n["hi"] + 1, p["lo"] - 1) if minus else (p["hi"] + 1, n["lo"] - 1)
+            gaps.append((p["qe"] + 1, n["qs"] - 1, win))
+    out = []
+    for k, (gs, ge, (wlo, whi)) in enumerate(gaps):
+        wlo, whi = max(1, wlo), min(clen, whi)
+        if whi - wlo < 30:
+            continue
+        q0 = max(1, gs - a.fill_pad)
+        seg = qseq[q0 - 1:min(qlen, ge + a.fill_pad)]
+        qf, sf = os.path.join(tmpdir, "gap.faa"), os.path.join(tmpdir, "win.fa")
+        open(qf, "w").write(f">gap\n{seg}\n")
+        open(sf, "w").write(f">win\n{faidx(fasta, [f'{contig}:{wlo}-{whi}'], False)[0]}\n")
+        r = subprocess.run(["tblastn", "-query", qf, "-subject", sf, "-seg", "no", "-evalue", str(a.fill_evalue),
+                            "-word_size", "2", "-comp_based_stats", "0", "-outfmt",
+                            "6 qseqid qstart qend sstart send pident length evalue bitscore sframe qseq sseq"],
+                           capture_output=True, text=True)
+        if r.returncode:
+            raise RuntimeError("tblastn (gap fill) failed: " + r.stderr.strip()[-150:])
+        best = None
+        for line in r.stdout.splitlines():
+            f = line.split("\t")
+            if len(f) < 12:
+                continue
+            ss, se, bits = int(f[3]), int(f[4]), float(f[8])
+            if ((se < ss) != minus) or bits < a.fill_min_bits:
+                continue
+            if best is None or bits > best[0]:
+                best = (bits, f)
+        if best:
+            bits, f = best
+            ss, se = wlo + int(f[3]) - 1, wlo + int(f[4]) - 1
+            out.append(dict(q="fill", qs=q0 + int(f[1]) - 1, qe=q0 + int(f[2]) - 1, ss=ss, se=se, bits=bits,
+                            qseq=f[10], sseq=f[11], strand="-" if minus else "+", lo=min(ss, se), hi=max(ss, se)))
+    return out
+
+
+def hsp_model(hits, fasta, contig, qlen):
+    """(protein, cds, n_hsps, cover, collinear, note) from one query's HSPs at a locus."""
+    chosen = select(hits)
     minus = chosen[0]["strand"] == "-"
     # collinear: later query part further along the gene (downstream on its strand)
     pos = [h["lo"] for h in chosen]
@@ -155,6 +228,14 @@ def main():
     ap.add_argument("--query-table", help="query_table.tsv from 4a (fallback query of the same group)")
     ap.add_argument("--method", choices=["hsp", "rescue"], default="hsp")
     ap.add_argument("--min-cover", type=float, default=0.7, help="query coverage for status ok")
+    ap.add_argument("--no-fill", dest="fill", action="store_false",
+                    help="do not search for missing exons (default: search, needs tblastn)")
+    ap.add_argument("--fill-evalue", type=float, default=10.0, help="e-value cut-off of the gap search")
+    ap.add_argument("--fill-min-bits", type=float, default=15.0, help="weakest gap hit accepted")
+    ap.add_argument("--fill-extend-bp", type=int, default=10000,
+                    help="how far beyond the first/last HSP to look for a missing first/last exon")
+    ap.add_argument("--fill-min-gap", type=int, default=5, help="unaligned query residues worth a search")
+    ap.add_argument("--fill-pad", type=int, default=3, help="query residues of overlap added to each gap search")
     ap.add_argument("--trim-to-met", type=int, default=20,
                     help="cut residues before the first Met if it lies within this many residues (0 = never)")
     ap.add_argument("--flank", type=int, default=2000, help="rescue method only")
@@ -174,13 +255,13 @@ def main():
             qgroup = {r["id"]: r["group"] for r in csv.DictReader(fh, delimiter="\t")}
     with open(a.curated) as fh:
         cur = list(csv.DictReader(fh, delimiter="\t"))
-    rows, aa_out, cds_out, cache = [], [], [], {}
+    rows, aa_out, cds_out, cache, clen_cache = [], [], [], {}, {}
     for r in cur:
         code, name, q = r["species"], r["name"], r["best_forward_query"]
         files = N.find_genome_files(a.genomedir, code, table[code]["accession"])
         lo, hi, st = int(r["g_start"]), int(r["g_end"]), r["strand"]
         prot = cds = ""
-        nh, cover, collinear, note, tried = 0, 0.0, True, "", 1
+        nh, cover, collinear, note, tried, filled = 0, 0.0, True, "", 1, 0
         try:
             if a.method == "hsp":
                 key = (code, r["contig"])
@@ -196,20 +277,37 @@ def main():
                 # model: a long but faulty query (e.g. a mis-annotated first exon) can win on
                 # bitscore and still give a worse model than a correct shorter one
                 same = [x for x in byq if qgroup.get(x) == r["group"]] or list(byq)
+                def rank(mod):
+                    p_, c_, n_, cov_, col_, note_ = mod
+                    return (find_domain(p_)[0] is not None, cov_ >= a.min_cover, 60 <= len(p_) <= 150,
+                            col_, cov_, len(p_))
+                if a.fill and (code, r["contig"]) not in clen_cache:
+                    fai = files["fasta"] + ".fai"
+                    clen_cache[(code, r["contig"])] = next((int(l.split("\t")[1]) for l in open(fai)
+                                                    if l.split("\t")[0] == r["contig"]), 10 ** 12)
                 best = None
                 for x in same:
+                    ql = len(qs[x][1]) if x in qs else 0
                     try:
-                        mod = hsp_model(byq[x], files["fasta"], r["contig"], len(qs[x][1]) if x in qs else 0)
+                        mod = hsp_model(byq[x], files["fasta"], r["contig"], ql)
                     except RuntimeError as e:
                         last_err = e; continue
-                    p_, c_, n_, cov_, col_, note_ = mod
-                    key = (find_domain(p_)[0] is not None, cov_ >= a.min_cover, 60 <= len(p_) <= 150,
-                           col_, cov_, len(p_))
-                    if best is None or key > best[0]:
-                        best = (key, x, mod)
+                    nfill = 0
+                    if a.fill and x in qs:
+                        extra = fill_gaps(select(byq[x]), files["fasta"], r["contig"], qs[x][1],
+                                          clen_cache[(code, r["contig"])], a, a.outdir)
+                        if extra:
+                            try:
+                                mod2 = hsp_model(byq[x] + extra, files["fasta"], r["contig"], ql)
+                                if rank(mod2) >= rank(mod):
+                                    mod, nfill = mod2, len(extra)
+                            except RuntimeError:
+                                pass
+                    if best is None or (rank(mod), nfill) > best[0]:
+                        best = ((rank(mod), nfill), x, mod, nfill)
                 if best is None:
                     raise last_err
-                _, q, (prot, cds, nh, cover, collinear, note) = best
+                _, q, (prot, cds, nh, cover, collinear, note), filled = best
                 tried = len(same)
             else:
                 if files["fasta"] not in cache:
@@ -230,14 +328,14 @@ def main():
                 nh = sum(1 for _ in open(os.path.join(a.outdir, f"{name}.exons.tsv"))) - 1
                 cover = len(prot) / len(qs[q][1]) if q in qs else 0
         except Exception as e:                          # noqa: BLE001
-            rows.append([name, q, a.method, 0, 0, "0.00", 0, "", f"failed: {str(e)[:80]}"])
+            rows.append([name, q, a.method, 0, 0, 0, "0.00", 0, "", f"failed: {str(e)[:80]}"])
             N.warn(f"{name}: no model: {e}")
             continue
         if a.trim_to_met and prot and not prot.startswith("M") and "M" in prot[:a.trim_to_met]:
             k = prot.index("M")                # residues before the start Met come from the query's own
             prot, cds = prot[k:], cds[3 * k:]  # upstream N-terminus, not from this gene
         m, how = find_domain(prot)
-        dom = f"{prot[m.start()]}@{m.start() + 1}{'' if how == 'strict' else ' (relaxed)'}" if m else "none"
+        dom = f"{prot[m.start()]}@{m.start() + 1}{'' if how == 'strict' else '(relaxed)'}" if m else "none"
         st_ = []
         if not m:
             st_.append("no_hormone_motif")
@@ -251,11 +349,11 @@ def main():
             st_.append("not_collinear")
         if note:
             st_.append(note)
-        rows.append([name, q, a.method, tried, nh, f"{cover:.2f}", len(prot), dom, ";".join(st_) or "ok"])
+        rows.append([name, q, a.method, tried, nh, filled, f"{cover:.2f}", len(prot), dom, ";".join(st_) or "ok"])
         aa_out.append((name, prot)); cds_out.append((name, cds))
 
     with open(os.path.join(a.outdir, "models.tsv"), "w") as fh:
-        fh.write("name\tquery\tmethod\tqueries_tried\thsps\tq_cover\taa_len\tdomain_start\tstatus\n")
+        fh.write("name\tquery\tmethod\tqueries_tried\thsps\tfilled\tq_cover\taa_len\tdomain_start\tstatus\n")
         for row in rows:
             fh.write("\t".join(map(str, row)) + "\n")
     for fn, recs in (("curated_aa.fa", aa_out), ("curated_cds.fa", cds_out)):
