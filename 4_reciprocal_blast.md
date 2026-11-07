@@ -303,7 +303,14 @@ cd ..
 # Plot the source of the name of each gene
 
 ```
+
 cd ${WORK}/reciprocal_blast
+mkdir -p tree
+python3 ${SCRIPTDIR}/4g_tree_inputs.py --curated reciprocal/curated_loci.tsv --models-dir models \
+    --outgroup-fasta tree_outgroup.faa --outgroup-group "GCGL (glucagon-like)" \
+    --published ${SCRIPTDIR}/4_reference_peptides.fa \
+    --reverse-table queries/reverse_table.tsv --exclude GalGal_Ex3 --outdir tree 2> tree/tree_inputs.log
+grep published tree/tree_inputs.log
 python3 ${SCRIPTDIR}/4g_tree_inputs.py --curated reciprocal/curated_loci.tsv --models-dir models \
     --outgroup-fasta tree_outgroup.faa --outgroup-group "GCGL (glucagon-like)" \
     --reverse-table queries/reverse_table.tsv --outdir tree 2> tree/tree_inputs.log

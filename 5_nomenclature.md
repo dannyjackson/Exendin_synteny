@@ -211,3 +211,36 @@ Put `names_names.tsv` beside the tree.
 4. **The root.** It is placed on the chicken branch by construction: it orients the tree,
    it does not test where the duplications happened. See the old `2_exendin_origin.md`
    step 5 for the outgroup set that would test it.
+
+
+cd ${WORK}/nomenclature
+R4=${WORK}/reciprocal_blast
+python3 ${SCRIPTDIR}/5d_plot_named_synteny.py --species-table ../species.tsv \
+    --loci ${R4}/reciprocal/reciprocal_loci.tsv --boundaries-used ${R4}/reciprocal/boundaries_used.tsv \
+    --models ${R4}/models/models.tsv --names names_names.tsv --groups names_groups.tsv \
+    --rename GalGal_Ex3=GalGal_GCGL --top GalGal \
+    --species-tree ${SPTREE} \
+    --svg named_synteny.svg --png named_synteny.png --layout named_synteny.tsv 2> named_synteny.log
+cat named_synteny.log
+
+
+cd ${WORK}/reciprocal_blast
+grep -c '^GalGal' ../species.tsv          # must be 1: delete a duplicate row first (the doubled chicken track)
+rm -rf loci reciprocal models tree
+python3 ${SCRIPTDIR}/4c_call_loci.py --species-table ../species.tsv --forward-dir forward \
+    --queries queries/forward_queries.faa --query-table queries/query_table.tsv \
+    --boundary-queries queries/boundary_queries.faa --outdir loci 2> loci.log
+grep -E "joined|not joined" loci.log
+python3 ${SCRIPTDIR}/4d_reciprocal_classify.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
+    --loci-dir loci --queries-dir queries --threads 8 --outdir reciprocal 2> reciprocal.log
+python3 ${SCRIPTDIR}/4e_build_models.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
+    --curated reciprocal/curated_loci.tsv --loci-dir loci \
+    --queries queries/forward_queries.faa --query-table queries/query_table.tsv \
+    --outdir models 2> models.log
+seqkit grep -r -p '^Hel' models/curated_aa.fa      # HelSus/HelCha GCGL should now start with M...
+
+
+mkdir -p tree
+python3 ${SCRIPTDIR}/4g_tree_inputs.py --curated reciprocal/curated_loci.tsv --models-dir models \
+    --outgroup-fasta tree_outgroup.faa --outgroup-group "GCGL (glucagon-like)" \
+    --reverse-table queries/reverse_table.tsv --exclude GalGal_Ex3 --outdir tree 2> tree/tree_inputs.log

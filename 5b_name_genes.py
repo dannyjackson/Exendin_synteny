@@ -168,6 +168,12 @@ def main():
             continue
         bm, ident = base(gene)
         sp = gene.split("_")[0]
+        if gene.startswith("Published_"):               # 4g --published: keep the published name
+            rows.append(dict(old_name=gene, new_name=gene, species="published", rule="P",
+                             order_basis="published precursor, not counted", position="-", placement="-",
+                             n_in_genome="-", best_match=bm or "NA", identity=f"{ident:.1f}",
+                             verdict=r.get("verdict", "")))
+            continue
         new = f"{sp}_GCGL" if bm == "GCGL" and ident >= a.close else gene
         rows.append(dict(old_name=gene, new_name=new, species=sp, rule="O", order_basis="extra tip, not counted",
                          position="-", placement="-", n_in_genome="-", best_match=bm or "NA",
@@ -204,16 +210,17 @@ def main():
         fh.write("tip\tcode\tsource\tspecies\tprotein\tdescription\n")
         for x in rows:
             ident = f"{x['best_match']} {x['identity']}%"
-            code = {"H": f"H {x['identity'].split('.')[0]}%", "L": "L", "S": "S", "O": "O"}[x["rule"]]
+            code = {"H": f"H {x['identity'].split('.')[0]}%", "L": "L", "S": "S", "O": "O", "P": "P"}[x["rule"]]
             fh.write(f"{x['new_name']}\t{code}\t{x['old_name']}\t{x['species']}\t{x['order_basis']}\t"
                      f"closest published: {ident}\n")
     with open(a.out_prefix + "_legend.txt", "w") as fh:
         fh.write(f"S=only gene in its genome: GCGL\nL=position from SLC4A8 to AQP5 (not orthology)\n"
-                 f"H=Heloderma: published peptide matched, % identity (>= {a.close:g}%)\nO=outgroup\n")
+                 f"H=Heloderma: published peptide matched, % identity (>= {a.close:g}%)\nO=outgroup\n"
+                 f"P=published precursor (UniProt)\n")
     k = defaultdict(int)
     for x in rows:
         k[x["rule"]] += 1
-    N.info(f"{len(rows)} genes named: " + ", ".join(f"{c} {k[c]}" for c in "SLHO" if k[c])
+    N.info(f"{len(rows)} genes named: " + ", ".join(f"{c} {k[c]}" for c in "SLHOP" if k[c])
            + f"; written to {a.out_prefix}_*.tsv")
 
 

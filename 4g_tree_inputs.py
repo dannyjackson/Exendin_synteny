@@ -29,7 +29,9 @@ Usage
       --outgroup-species GalGal --outdir tree
 
 Writes to --outdir:
-  tree_aa.fa, tree_cds.fa   sequences of the tips (tip = locus name from 4d)
+  tree_aa.fa, tree_cds.fa   sequences of the tips (tip = locus name from 4d); --published
+                            adds the published exendin-2/-3/-4 precursors (Published_EX2 ...)
+                            to tree_aa.fa only
   groups.tsv                tip<TAB>group (name group, as in the synteny plots)
   outgroup.txt              comma-separated outgroup tips (empty: midpoint-root)
   tips.tsv                  every curated locus: included yes/no and why
@@ -39,7 +41,7 @@ Writes to --outdir:
                             another species, T = TOGA2 projection, P = published precursor,
                             O = outgroup sequence from --outgroup-fasta
 """
-import argparse, csv, os, sys
+import argparse, csv, os, re, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -55,6 +57,9 @@ def main():
                     help="protein FASTA of outgroup tips added as they are (e.g. chicken's NCBI GCGL protein), "
                          "used instead of --outgroup-species models; no CDS, so not in tree_cds.fa")
     ap.add_argument("--outgroup-group", default="outgroup", help="colour group of --outgroup-fasta tips")
+    ap.add_argument("--published",
+                    help="4_reference_peptides.fa: its exendin *_precursor records are added as tips "
+                         "(Published_EX2, _EX3, _EX4); protein only, so not in tree_cds.fa")
     ap.add_argument("--reverse-table",
                     help="reverse_table.tsv from 4a: writes name_sources.tsv (where each tip's name came from), "
                          "which 4h --sources prints as a code after each tip")
@@ -120,6 +125,14 @@ def main():
             N.info("--outgroup-fasta given: --outgroup-species tips stay in as ordinary tips")
         og_sp = set()
     og = [n for n, _ in extra] + [r["name"] for r in keep if r["species"] in og_sp]
+    published = []                    # (tip, seq, group, header)
+    if a.published:
+        for n, (h, seq) in N.read_fasta(a.published).items():
+            base = n.split("|")[0]
+            m = re.match(r"EXENDIN(\d+)_precursor$", base)
+            if m:
+                published.append((f"Published_EX{m.group(1)}", seq.rstrip("*"), f"exendin-{m.group(1)}", h))
+        N.info(f"published precursors added as tips: {', '.join(t for t, *_ in published) or 'none found'}")
     if og_sp and not og:
         N.warn(f"no included tip from --outgroup-species {','.join(sorted(og_sp))}: midpoint-root instead")
     with open(os.path.join(a.outdir, "tree_aa.fa"), "w") as fa, \
@@ -140,6 +153,9 @@ def main():
         for n, seq in extra:
             fa.write(f">{n}\n{seq}\n")
             fg.write(f"{n}\t{a.outgroup_group}\n")
+        for n, seq, grp, h in published:
+            fa.write(f">{n}\n{seq}\n")
+            fg.write(f"{n}\t{grp}\n")
     open(os.path.join(a.outdir, "outgroup.txt"), "w").write(",".join(og) + "\n")
     with open(os.path.join(a.outdir, "tips.tsv"), "w") as fh:
         fh.write("name\tspecies\tgroup\tclass\taa_len\tincluded\treason\n")
@@ -162,6 +178,10 @@ def main():
                     N.warn(f"{r['name']}: best reverse hit {r['rev_best']} not in {a.reverse_table}")
             for n, _ in extra:
                 fh.write(f"{n}\tO\toutgroup\t-\t{n}\tadded with --outgroup-fasta\n")
+            for n, seq, grp, h in published:
+                f = h.split("|")
+                fh.write(f"{n}\tP\tpublished\t{f[3] if len(f) > 3 else '-'}\t{f[1] if len(f) > 1 else n}\t"
+                         f"{f[2] if len(f) > 2 else grp}\n")
         N.info(f"name sources written to {os.path.join(a.outdir, 'name_sources.tsv')}")
 
     by = {}
