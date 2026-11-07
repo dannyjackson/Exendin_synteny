@@ -20,6 +20,9 @@ legend line under the tree:
   O  outgroup sequence added with 4g --outgroup-fasta
 Hovering over a code in the SVG shows the species and the protein it came from.
 
+--legend FILE replaces those meanings with 'CODE=meaning' lines (step 5 uses it for the
+naming rule of each tip; a code may carry detail after a space, e.g. 'H 100%').
+
 Usage
   python3 4h_draw_tree.py --tree tree/exendin_aa.rooted.nwk --groups tree/groups.tsv \
       --sources tree/name_sources.tsv --outgroup "$(cat tree/outgroup.txt)" \
@@ -35,7 +38,8 @@ import lib_exendin_names as N  # noqa: E402
 spec = importlib.util.spec_from_file_location("draw_tree", os.path.join(HERE, "lib_draw_tree.py"))
 T = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(T)
-T.FIXED = dict(N.FIXED_COLOURS, outgroup="#333333")
+T.FIXED = dict(N.FIXED_COLOURS, outgroup="#333333", **{"no close published match": "#A0A0A0",
+                                                        "not compared": "#C8C8C8"})
 T.PALETTE = N.EXTRA_COLOURS
 
 LEGEND = {"R": "reference RefSeq proteome", "N": "NCBI annotation", "T": "TOGA2 projection",
@@ -52,7 +56,7 @@ def pop_arg(name):
     return None
 
 
-def add_sources(svg, src):
+def add_sources(svg, src, legend=None):
     """Append [code] after each tip label, widen the figure for it, and add a legend line."""
     used = set()
     for tip, (code, detail) in src.items():
@@ -61,7 +65,7 @@ def add_sources(svg, src):
                                     f'font-size="9">[{code}]<title>{html.escape(detail)}</title></tspan>'
                                     f'{m.group(2)}', svg, count=1)
         if n:
-            svg = new; used.add(code)
+            svg = new; used.add(code.split()[0])
     if not used:
         N.warn("--sources: no tip of the tree is in the sources table")
         return svg, 0, 0
@@ -71,7 +75,9 @@ def add_sources(svg, src):
     dw, dh = 40, 22
     head = re.sub(r'width="[\d.]+"', f'width="{W + dw:.0f}"', first, count=1)
     head = re.sub(r'height="[\d.]+"', f'height="{H + dh:.0f}"', head, count=1)
-    legend = "Name source:\u00a0\u00a0" + "\u00a0\u00a0·\u00a0\u00a0".join(f"[{c}] {LEGEND[c]}" for c in "RNTPO?" if c in used)
+    label = "Name source" if legend is None else "Naming rule"
+    legend = legend or [(c, LEGEND[c]) for c in "RNTPO?"]
+    legend = f"{label}:\u00a0\u00a0" + "\u00a0\u00a0·\u00a0\u00a0".join(f"[{c}] {t}" for c, t in legend if c in used)
     body = svg.split("\n", 1)[1].rsplit("</svg>", 1)[0]
     svg = (head + "\n" + body + f'<text x="20" y="{H + dh - 8:.0f}" font-size="10" fill="#555">'
            f'{html.escape(legend)}</text>\n</svg>')
@@ -80,6 +86,10 @@ def add_sources(svg, src):
 
 def main():
     sources = pop_arg("--sources")
+    legend_file = pop_arg("--legend")
+    legend = None
+    if legend_file:
+        legend = [tuple(l.rstrip("\n").split("=", 1)) for l in open(legend_file) if "=" in l]
     if not sources:
         T.main()
         return
@@ -102,15 +112,16 @@ def main():
         T.write_png = orig_png
     first = buf.getvalue().split("\n", 1)[0]
     W0 = float(re.search(r'width="([\d.]+)"', first).group(1))
-    svg, dw, dh = add_sources(buf.getvalue().rstrip("\n"), src)
+    svg, dw, dh = add_sources(buf.getvalue().rstrip("\n"), src, legend)
     print(svg)
     for path, w, h in png_calls:
         scale = w / W0
         orig_png(svg, path, int(w + dw * scale), int(h + dh * scale))
     counts = {}
     for code, _ in src.values():
-        counts[code] = counts.get(code, 0) + 1
-    print("[info] name sources: " + ", ".join(f"[{c}] {LEGEND.get(c, c)} {n}" for c, n in sorted(counts.items())),
+        counts[code.split()[0]] = counts.get(code.split()[0], 0) + 1
+    names = dict(legend) if legend else LEGEND
+    print("[info] codes: " + ", ".join(f"[{c}] {names.get(c, c)} {n}" for c, n in sorted(counts.items())),
           file=sys.stderr)
 
 

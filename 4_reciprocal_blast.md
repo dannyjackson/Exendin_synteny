@@ -284,10 +284,11 @@ python3 ${SCRIPTDIR}/4h_draw_tree.py --tree exendin_aa.rooted.nwk --groups group
     --png exendin_aa.png > exendin_aa.svg
 cd ..
 ```
-- **Tips.** `tree/tips.tsv` lists every curated locus, whether it is in the tree, and why not.
-  By default the tree takes only 4e models with status `ok` (hormone-domain motif, 60–150
-  aa) and no disabled copies. Override with `--keep-flagged`, `--include-disabled`, or
-  `--exclude NAME,...`, e.g. after looking at the alignment.
+- **Tips.** Every curated exendin-family locus in the SLC4A8–AQP5 region is a tip, remnants,
+  flagged models and pseudogenes included. Stop codons are masked (`*` → `X`, stop codons →
+  `NNN` in the CDS). Only loci with no 4e model, or placed `elsewhere`, are left out;
+  `tree/tips.tsv` lists every locus and why. `--exclude NAME,...` drops single tips;
+  `--exclude-disabled` and `--exclude-flagged` restore the strict set.
 - **Root.** Chicken GCGL (`--outgroup-species GalGal`) when it passed 4d/4e; otherwise
   midpoint. With one outgroup sequence the root is placed on its branch by construction: it
   orients the tree, it does not test where the duplications happened. To test that, add GCGL
@@ -299,14 +300,17 @@ cd ..
 - **Optional codon tree.** Same steps as the old `4_toga2_exendin_tree.md` step 3: MACSE on
   `tree/tree_cds.fa`, then `$IQTREE -st CODON` on the exported codon alignment.
 
-# Find the source of the name of each gene
+# Plot the source of the name of each gene
 
 ```
 cd ${WORK}/reciprocal_blast
-# the locus: its group, class and best reverse hit
-awk -F'\t' 'NR==1||$3=="PogVit"' reciprocal/reciprocal_loci.tsv | cut -f1,8,9,20-23
-# where that protein came from (replace with the rev_best ID)
-grep -F 'REV_BEST_ID' queries/reverse_table.tsv
-# if it is a toga2 query: the reference text that named it
-cut -f1,2,8 ../synteny_toga2/reference_exendins.tsv
+python3 ${SCRIPTDIR}/4g_tree_inputs.py --curated reciprocal/curated_loci.tsv --models-dir models \
+    --outgroup-fasta tree_outgroup.faa --outgroup-group "GCGL (glucagon-like)" \
+    --reverse-table queries/reverse_table.tsv --outdir tree 2> tree/tree_inputs.log
+OG=$(cat tree/outgroup.txt)
+cd tree
+python3 ${SCRIPTDIR}/4h_draw_tree.py --tree exendin_aa.rooted.nwk --groups groups.tsv --sources name_sources.tsv \
+    ${OG:+--outgroup $OG} --title "Curated exendin-family genes (reciprocal BLAST)" \
+    --png exendin_aa.png > exendin_aa.svg
+cd ..
 ```

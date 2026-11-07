@@ -3,13 +3,19 @@
 Select the curated step-4 genes for a gene tree, and write the files the tree steps need.
 
 Input: the curated loci (4d curated_loci.tsv) and their models (4e models.tsv,
-curated_aa.fa, curated_cds.fa). A locus is a tip if its model is usable:
-  - 4e status 'ok' (a hormone-domain motif, 60-150 aa); --keep-flagged keeps the rest;
-  - not disabled (premature stop / domain not starting His or Tyr); --include-disabled
-    keeps them. Disabled copies sit on long branches and destabilise a short-alignment
-    tree, as noted in the old copy-number survey, so they are left out by default;
-  - --exclude NAME,NAME drops tips by hand (e.g. after looking at the alignment).
-Every left-out locus is listed with its reason, so nothing disappears silently.
+curated_aa.fa, curated_cds.fa). Every curated exendin-family locus in the SLC4A8-AQP5
+region is a tip by default: remnants, flagged models and pseudogenes included, since the
+question is the whole family in the region. Only these are left out:
+  - loci with no 4e model (nothing to align);
+  - loci 4d placed 'elsewhere', i.e. outside the region (--placements to change);
+  - --exclude NAME,NAME, by hand.
+Stop codons are masked so the tree programs accept the sequence: internal '*' -> 'X' in
+the protein, stop codons -> NNN in the CDS (the gene stays in; tips.tsv says what was
+masked). --exclude-flagged and --exclude-disabled restore the stricter selection, e.g. for
+a selection analysis, where pseudogenes and partial models do not belong.
+Very short models (single-exon remnants of ~20-60 aa) are kept too; they are mostly gaps
+in the alignment and can sit on long, poorly supported branches; read their placement
+with that in mind, or leave them out with --exclude.
 
 Outgroup: --outgroup-fasta (protein sequences added as tips, e.g. chicken's NCBI-annotated
 GCGL, when the genome model of the outgroup is partial), or else the tips of --outgroup-species (e.g. GalGal: chicken GCGL, the single-copy
@@ -52,8 +58,12 @@ def main():
     ap.add_argument("--reverse-table",
                     help="reverse_table.tsv from 4a: writes name_sources.tsv (where each tip's name came from), "
                          "which 4h --sources prints as a code after each tip")
-    ap.add_argument("--keep-flagged", action="store_true", help="keep models whose 4e status is not ok")
-    ap.add_argument("--include-disabled", action="store_true", help="keep disabled copies")
+    ap.add_argument("--placements", default="interval,near_boundary,unplaced",
+                    help="4d placements that count as the SLC4A8-AQP5 region (add 'elsewhere' for all)")
+    ap.add_argument("--exclude-flagged", action="store_true",
+                    help="leave out models whose 4e status is not ok (default: keep every model)")
+    ap.add_argument("--exclude-disabled", action="store_true",
+                    help="leave out copies with a premature stop (default: keep them, stops masked)")
     ap.add_argument("--exclude", default="", help="comma-separated tip names to leave out")
     ap.add_argument("--outdir", required=True)
     a = ap.parse_args()
@@ -69,22 +79,34 @@ def main():
     excl = set(x for x in a.exclude.split(",") if x)
     og_sp = set(x for x in a.outgroup_species.split(",") if x)
 
-    rows, keep = [], []
+    region = set(x for x in a.placements.split(",") if x)
+    rows, keep, masked = [], [], {}
     for r in cur:
         n, why = r["name"], []
         m = models.get(n)
+        seq = aa.get(n, "").rstrip("*")
+        stopped = "premature_stop" in r.get("state", "") or "*" in seq or (m and "internal_stop" in m["status"])
         if n not in aa or not m:
             why.append("no model (4e)")
-        elif m["status"] != "ok" and not a.keep_flagged:
-            why.append(f"4e status {m['status']}")
-        if r["disabled"] == "yes" and not a.include_disabled:
-            why.append("disabled copy")
+        elif not seq:
+            why.append("empty model")
+        if r.get("placement", "interval") not in region:
+            why.append(f"placement {r.get('placement')} (outside the region)")
+        if a.exclude_flagged and m and m["status"] != "ok":
+            why.append(f"4e status {m['status']} (--exclude-flagged)")
+        if a.exclude_disabled and stopped:
+            why.append("premature stop (--exclude-disabled)")
         if n in excl:
             why.append("--exclude")
-        if "*" in aa.get(n, "").rstrip("*"):
-            why.append("internal stop in model")
+        note = []
+        if not why:
+            if "*" in seq:
+                note.append(f"{seq.count('*')} internal stop(s) masked as X")
+            if m and m["status"] != "ok":
+                note.append(f"4e status {m['status']}")
+            masked[n] = "; ".join(note)
         rows.append([n, r["species"], r["group"], r["class"], m["aa_len"] if m else "0",
-                     "yes" if not why else "no", "; ".join(why) or "-"])
+                     "yes" if not why else "no", "; ".join(why) or ("; ".join(note) or "-")])
         if not why:
             keep.append(r)
 
@@ -105,9 +127,15 @@ def main():
          open(os.path.join(a.outdir, "groups.tsv"), "w") as fg:
         fg.write("tip\tgroup\n")
         for r in keep:
-            fa.write(f">{r['name']}\n{aa[r['name']].rstrip('*')}\n")
+            fa.write(f">{r['name']}\n{aa[r['name']].rstrip('*').replace('*', 'X')}\n")
             if r["name"] in cds:
-                fc.write(f">{r['name']}\n{cds[r['name']]}\n")
+                c = cds[r["name"]]
+                c = c[:len(c) - len(c) % 3]
+                cod = [c[i:i + 3] for i in range(0, len(c), 3)]
+                if cod and cod[-1].upper() in ("TAA", "TAG", "TGA"):
+                    cod = cod[:-1]                      # terminal stop off, as in the protein
+                cod = ["NNN" if x.upper() in ("TAA", "TAG", "TGA") else x for x in cod]
+                fc.write(f">{r['name']}\n{''.join(cod)}\n")
             fg.write(f"{r['name']}\t{r['group']}\n")
         for n, seq in extra:
             fa.write(f">{n}\n{seq}\n")
