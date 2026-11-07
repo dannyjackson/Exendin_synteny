@@ -29,6 +29,8 @@ FIXED_COLOURS = {
     "exendin (unnumbered)": "#CC79A7",
     "GCGL (glucagon-like)": "#009E73",
     "proglucagon": "#7F7F7F",
+    "no close published match": "#A0A0A0",      # step 5: 5a identity < 80% to every published peptide
+    "not compared": "#C8C8C8",
 }
 EXTRA_COLOURS = ["#7F3C8D", "#8C564B", "#B8860B", "#2F4F4F", "#E7298A", "#1B9E77", "#A6761D", "#666666"]
 
@@ -130,6 +132,9 @@ def add_split_arg(ap):
                     help="comma-separated species codes drawn in a box at the top right instead of in the "
                          "tree-ordered panel (outgroups not on the tree, e.g. GalGal)")
     ap.add_argument("--inset-title", default="Not on the tree", help="heading of the --inset box")
+    ap.add_argument("--top", default="",
+                    help="comma-separated species drawn as the first rows, above the tree-ordered panel "
+                         "(e.g. a reference outgroup such as GalGal)")
     ap.add_argument("--inset-width", type=int, default=640, help="width of the --inset box (px)")
 
 
@@ -247,7 +252,8 @@ def finish(S, a, contigs, queries, bnames, title, note, legend_extra=(), empty_r
     'nothing found'. Both are set here by wrapping the engine's own functions for one
     call, so lib_synteny_engine.py stays a verbatim copy of the old 4d script. Long empty
     stretches within a contig are shortened and marked // (compress_gaps, --max-gap-kb).
-    Species in --inset are drawn in a box at the top right, not in the tree-ordered panel.
+    Species in --inset are drawn in a box at the top right, not in the tree-ordered panel;
+    species in --top are drawn as the first rows of the panel, above the tree.
     """
     empty_reason = empty_reason or {}
     inset = [q for q in getattr(a, "inset", "").split(",") if q]
@@ -256,7 +262,12 @@ def finish(S, a, contigs, queries, bnames, title, note, legend_extra=(), empty_r
             warn(f"--inset {q}: not a species of this figure; ignored")
     inset = [q for q in inset if q in queries]
     main_q = [q for q in queries if q not in inset]
-    orig_render, orig_build = S.render, S.build_tracks
+    orig_render, orig_build, orig_order = S.render, S.build_tracks, S.species_order
+    top = [q for q in getattr(a, "top", "").split(",") if q and q in main_q]
+
+    def species_order(*args, **kw):
+        order, tree = orig_order(*args, **kw)
+        return top + [q for q in order if q not in top], tree
 
     def build(*args, **kw):
         tracks = orig_build(*args, **kw)
@@ -290,11 +301,11 @@ def finish(S, a, contigs, queries, bnames, title, note, legend_extra=(), empty_r
             info(f"inset: {', '.join(inset)} ({len(it)} track(s), own scale {ispan / 1000:.0f} kb)")
         return svg, lay, span
 
-    S.render, S.build_tracks = render, build
+    S.render, S.build_tracks, S.species_order = render, build, species_order
     try:
         S.finish(a, contigs, main_q, bnames, title, note, legend_extra=legend_extra)
     finally:
-        S.render, S.build_tracks = orig_render, orig_build
+        S.render, S.build_tracks, S.species_order = orig_render, orig_build, orig_order
 
 
 # ---------------- TOGA2 names (steps 3 and 4) ----------------
