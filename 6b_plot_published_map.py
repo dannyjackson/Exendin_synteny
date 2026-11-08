@@ -93,8 +93,9 @@ class Svg:
         self.el.append(s)
 
     def text(self, x, y, s, size=11, anchor="start", weight="normal", fill="#222", mono=False, italic=False):
+        ital = ' font-style="italic"' if italic else ""
         self.add(f'<text x="{x:.1f}" y="{y:.1f}" {MONO if mono else FONT} font-size="{size}" text-anchor="{anchor}" '
-                 f'font-weight="{weight}" fill="{fill}"{" font-style=\"italic\"" if italic else ""}>{E(s)}</text>')
+                 f'font-weight="{weight}" fill="{fill}"{ital}>{E(s)}</text>')
 
     def rect(self, x, y, w, h, fill, stroke="none", sw=1, rx=0, opacity=1.0, dash=None):
         d = f' stroke-dasharray="{dash}"' if dash else ""
