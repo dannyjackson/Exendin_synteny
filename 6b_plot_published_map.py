@@ -292,7 +292,17 @@ def main():
         to_toga[n_].append(t)
 
     def ncbi_name(t):
-        return to_ncbi.get(t, t)
+        """TOGA2 contig name -> genome contig: explicit map / sequence report first, then the
+        renamings TOGA2 makes ('JANEZZ010002025__1' for 'JANEZZ010002025.1')."""
+        if t in to_ncbi:
+            return to_ncbi[t]
+        if t in fai_names or not fai_names:
+            return t
+        import re as _re
+        for c_ in (t.replace("__", "."), _re.sub(r"_(\d+)$", r".\1", t), t + ".1"):
+            if c_ in fai_names:
+                return c_
+        return t
 
     contigs = sorted({m["contig"] for m in maps}, key=lambda c: min(int(m["start"]) for m in maps if m["contig"] == c))
     tracks = []                                        # (label, {ncbi contig: [genes]})
