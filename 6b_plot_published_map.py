@@ -117,9 +117,27 @@ def text_w(s, size):
     return 0.56 * size * len(s)
 
 
-def draw_gene(svg, g, X, y, flip, colour_fill, outline=None, label=True, label_y=None, max_label=None):
-    """One gene model: intron line, exons (thin), CDS (thick), strand chevrons."""
+_CLIP = [0]
+
+
+def clip_open(svg, x0, x1, y0, y1):
+    """Start a group clipped to x0-x1 / y0-y1 (gene models longer than the window stop at its edge)."""
+    _CLIP[0] += 1
+    cid = f"clip{_CLIP[0]}"
+    svg.add(f'<defs><clipPath id="{cid}"><rect x="{x0:.1f}" y="{y0:.1f}" width="{x1 - x0:.1f}" '
+            f'height="{y1 - y0:.1f}"/></clipPath></defs><g clip-path="url(#{cid})">')
+
+
+def clip_close(svg):
+    svg.add("</g>")
+
+
+def draw_gene(svg, g, X, y, flip, colour_fill, outline=None, label=True, label_y=None, max_label=None, xlim=None):
+    """One gene model: intron line, exons (thin), CDS (thick), strand chevrons. xlim=(x0, x1):
+    the drawing is clipped there, and the label is centred on the visible part."""
     t = g["tx"][0]
+    if xlim:
+        clip_open(svg, xlim[0], xlim[1], y - 12, y + 12)
     xs = sorted([X(g["start"]), X(g["end"])])
     svg.line(xs[0], y, xs[1], y, stroke=colour_fill, sw=1.2)
     for s, e in t["exons"]:
@@ -141,8 +159,14 @@ def draw_gene(svg, g, X, y, flip, colour_fill, outline=None, label=True, label_y
             svg.add(f'<polyline points="{x - d:.1f},{y - 3} {x + d:.1f},{y} {x - d:.1f},{y + 3}" fill="none" '
                     f'stroke="white" stroke-width="1"/>')
             x += step
+    if xlim:
+        clip_close(svg)
+        xs = [max(xs[0], xlim[0]), min(xs[1], xlim[1])]
     if label:
         s = G.gene_label(g, 40) if max_label is None else G.gene_label(g, max_label)
+        if xlim and (X(g["start"]) < xlim[0] - 1 or X(g["end"]) > xlim[1] + 1 or
+                     X(g["end"]) < xlim[0] - 1 or X(g["start"]) > xlim[1] + 1):
+            s += "  (continues beyond the window)"
         svg.text((xs[0] + xs[1]) / 2, label_y if label_y is not None else y + 22, s, size=10, anchor="middle",
                  fill="#333")
 
@@ -234,8 +258,11 @@ def main():
         hi = max(int(m["end"]) for m in ms)
         bs = [g for g in genes[c] if g["name"].upper() in bnames
               and min(abs(g["start"] - hi), abs(g["end"] - lo)) <= a.context_max_kb * 1000]
-        rlo = min([lo] + [g["start"] for g in bs]) - int(a.context_pad_kb * 1000)
-        rhi = max([hi] + [g["end"] for g in bs]) + int(a.context_pad_kb * 1000)
+        # genes that carry a mapped peptide are shown whole (if not absurdly long)
+        carry = [g for g in genes[c] if any(g["end"] >= int(m["start"]) and g["start"] <= int(m["end"]) for m in ms)
+                 and g["end"] - g["start"] <= a.context_max_kb * 1000]
+        rlo = min([lo] + [g["start"] for g in bs + carry]) - int(a.context_pad_kb * 1000)
+        rhi = max([hi] + [g["end"] for g in bs + carry]) + int(a.context_pad_kb * 1000)
         rlo = max(1, rlo)
         L = clen.get(c, max(rhi, 1))
         rhi = min(rhi, L)
@@ -284,8 +311,8 @@ def main():
             fam = N.is_family(grp)
             col = colour(grp) if fam else ("#3A3238" if g["name"].upper() in bnames else "#8E878C")
             outl = "#1E1A1D" if g["id"] in mapped_genes else None
-            draw_gene(svg, g, XA, ya, False, col, outline=outl, label=False)
-            xm = (XA(g["start"]) + XA(g["end"])) / 2
+            draw_gene(svg, g, XA, ya, False, col, outline=outl, label=False, xlim=(X0, X1))
+            xm = (max(XA(g["start"]), X0) + min(XA(g["end"]), X1)) / 2
             lab = g["name"] if not fam else f"{g['name']} ({N.short_label(g['description']) or grp})"
             if "uncharacterized" in g["description"].lower():
                 lab += " (uncharacterized)"
@@ -298,14 +325,25 @@ def main():
                     svg.text(xm, ly, lab, size=9.5, anchor="middle", fill=col if fam else "#444",
                              weight="bold" if (fam or g["id"] in mapped_genes) else "normal")
                     break
-        # peptide markers below the axis, one per panel (group) on this contig
+        # peptide markers below the axis, one per panel (group) and locus; markers that would
+        # overprint (several exendins on one gene) are set side by side
+        mk = []
         for g in groups:
             gm = [m for m in ms if m["group"] == g]
-            if not gm:
-                continue
-            col = colour(g)
-            for w in windows(gm):                      # one marker per locus
-                xm = (XA(w["lo"]) + XA(w["hi"])) / 2
+            for w in windows(gm):
+                mk.append([(XA(w["lo"]) + XA(w["hi"])) / 2, g])
+        mk.sort()
+        clusters = []
+        for x, g in mk:
+            if clusters and x - clusters[-1][-1][0] < 18:
+                clusters[-1].append((x, g))
+            else:
+                clusters.append([(x, g)])
+        for cl in clusters:
+            x0 = sum(x for x, _ in cl) / len(cl)
+            for k, (_, g) in enumerate(cl):
+                xm = x0 + (k - (len(cl) - 1) / 2) * 18
+                col = colour(g)
                 svg.poly([(xm, ya + 12), (xm - 7, ya + 24), (xm + 7, ya + 24)], fill=col)
                 svg.text(xm, ya + 38, letters[g], size=13, anchor="middle", weight="bold", fill=col)
                 markers.setdefault(g, []).append((xm, ya + 42))
@@ -318,6 +356,7 @@ def main():
     pw = (W - 2 * M - (n - 1) * gap) / n
     PY = A_bottom + 70
     panel_bottoms = []
+    wedges = Svg()                                     # drawn first, under panel A and the panels
     body = Svg()                                       # panels drawn after the wedges (on top)
     for i, g in enumerate(groups):
         px = M + i * (pw + gap)
@@ -361,7 +400,8 @@ def main():
             for gg in near:
                 grp = N.name_group(gg["description"] + " " + gg["name"])
                 gcol = colour(grp) if N.is_family(grp) else "#8E878C"
-                draw_gene(s, gg, X, yy, flip, gcol, label=True, label_y=yy + 20, max_label=int((LX1 - LX0) / 6))
+                draw_gene(s, gg, X, yy, flip, gcol, label=True, label_y=yy + 20, max_label=int((LX1 - LX0) / 8),
+                          xlim=(LX0, LX1))
                 yy += 34
             if not near:
                 s.text(LX0, yy + 4, "no NCBI gene annotated here", size=10, fill="#999", italic=True)
@@ -526,12 +566,12 @@ def main():
         panel_bottoms.append(yy + 10)
         # wedge from marker(s) in A
         for mx, my in markers.get(g, []):
-            svg.poly([(mx - 4, my), (mx + 4, my), (px + pw, PY), (px, PY)], fill=tint(col, 0.08), stroke=tint(col, 0.55),
+            wedges.poly([(mx - 4, my), (mx + 4, my), (px + pw, PY), (px, PY)], fill=tint(col, 0.08), stroke=tint(col, 0.55),
                      dash="4,3")
     for i, g in enumerate(groups):
         px = M + i * (pw + gap)
         svg.rect(px, PY, pw, panel_bottoms[i] - PY, "#FFFFFF", stroke=tint(colour(g), 0.7), sw=1.5, rx=8)
-    svg.el += body.el
+    svg.el = svg.el[:1] + wedges.el + svg.el[1:] + body.el
     H = int(max(panel_bottoms) + 30)
     svg.text(M, H - 10, "Mapping: 6a_map_published.py (genome-wide tblastn, then a sensitive tblastn in a window "
              "around the best loci; one codon per peptide residue). Genes: NCBI RefSeq GFF.", size=9.5, fill="#777")
