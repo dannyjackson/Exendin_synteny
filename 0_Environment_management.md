@@ -1,8 +1,4 @@
 # Environment management
-Adapted from `0_Environment_management.md` of
-[Exendin_evolution](https://github.com/dannyjackson/Exendin_evolution), with two fixes: its
-activation block named `hal_toga_env` (the environment is `exendin_env`), and `soure` was a
-typo for `source`.
 
 ## Working directory (once)
 ```
@@ -16,8 +12,6 @@ mkdir -p synteny_ncbi synteny_toga2 reciprocal_blast nomenclature
 ```
 
 ## Software (once)
-The old `exendin_env` has everything except an SVG→PNG converter. Add it, or create the
-environment from scratch:
 ```
 source myconda
 mamba install -n exendin_env -c conda-forge librsvg          # existing environment

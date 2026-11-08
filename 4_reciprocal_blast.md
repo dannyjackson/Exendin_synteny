@@ -52,26 +52,21 @@ awk -F'\t' 'NR>1 && ($6<70 || $6>150)' queries_raw/query_table.tsv | cut -f1-6  
   ~47,000 loci in HelSus and ~35,000 in HelCha. Drop it (and any other query step 3's check
   shows behaving like it); the published exendin-3 precursor and other species' copies still
   find the gene. `CanAsp__ncbi__GCGL__1` (161 aa) is long but behaves normally: keep it.
-  ```
-  BAD=HelCha__toga2__Ex3_4__1                       # comma-separated if several
-  mkdir -p queries
-  for F in forward_queries.faa reverse_db.faa; do seqkit grep -v -p ${BAD//,/ -p } queries_raw/$F > queries/$F; done
-  for T in query_table reverse_table; do
-    awk -F'\t' -v B="$BAD" 'BEGIN{split(B,b,","); for(i in b) x[b[i]]=1} !($1 in x)' queries_raw/$T.tsv > queries/$T.tsv
-  done
-  cp queries_raw/boundary_queries.faa queries/
-  ```
+```
+BAD=HelCha__toga2__Ex3_4__1                       # comma-separated if several
+mkdir -p queries
+for F in forward_queries.faa reverse_db.faa; do seqkit grep -v -p ${BAD//,/ -p } queries_raw/$F > queries/$F; done
+for T in query_table reverse_table; do
+  awk -F'\t' -v B="$BAD" 'BEGIN{split(B,b,","); for(i in b) x[b[i]]=1} !($1 in x)' queries_raw/$T.tsv > queries/$T.tsv
+done
+cp queries_raw/boundary_queries.faa queries/
+```
   Everything downstream reads `queries/`. Re-running `4a` writes `queries_raw/` again, so
   repeat this filter after it.
 - **More competitors** for distant taxa: add `--reverse-proteome AnoCar=...`.
 
 ## 2. Forward tblastn against every genome
-One job per genome (including chicken). Interactively:
-```
-export SPECIES_TABLE=../species.tsv GENOMEDIR QUERYDIR=queries OUT=forward THREADS=8
-for C in $(awk -F'\t' 'NR>1 && $3!="NA"{print $1}' ../species.tsv); do bash ${SCRIPTDIR}/4b_forward_tblastn.sh $C; done
-```
-or as a Biowulf swarm (makeblastdb + tblastn ≈ 1 h per squamate genome):
+Submit as a Biowulf swarm (makeblastdb + tblastn ≈ 10 min per squamate genome):
 ```
 awk -F'\t' -v S=${SCRIPTDIR} -v W=$PWD -v G=${GENOMEDIR} 'NR>1 && $3!="NA"{
   printf "source myconda; mamba activate exendin_env; cd %s; SPECIES_TABLE=../species.tsv GENOMEDIR=%s QUERYDIR=queries OUT=forward THREADS=8 bash %s/4b_forward_tblastn.sh %s\n", W, G, S, $1}' \
