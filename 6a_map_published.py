@@ -23,6 +23,8 @@ Method, per peptide
   4. The candidate with the most identical residues (then the highest chain score) is
      the mapping. Each query residue gets one codon: where two HSPs overlap at an exon
      junction, the HSP whose residue matches the query wins, then the higher-scoring one.
+  4b. tblastn stops at mismatched ends, so up to 6 unaligned residues at either end of
+     the peptide get the codons that continue the aligned exon (read from the genome).
   5. The codons just before residue 1 and just after the last residue are translated
      from the genome (same exon): the processing site before the peptide and, after it,
      whether the genome encodes more residues (e.g. helospectin I's Ser38 after
@@ -43,7 +45,8 @@ Writes to --outdir
   hsps.tsv             the HSPs (exons) of each mapping
   residues.tsv         one row per peptide residue: codon coordinates, genome residue, status
                        (identical / mismatch / stop / gap / unmapped), genome residues
-                       inserted after it
+                       inserted after it, ext=yes if the codon was read by extending the
+                       alignment over an unaligned end (step 4b)
 Needs tblastn, makeblastdb and samtools (exendin_env).
 """
 import argparse, os, subprocess, sys, tempfile
@@ -243,6 +246,45 @@ def residue_map(ch, seq):
     return rows, ident, mapped
 
 
+def extend_ends(rows, fasta, contig, strand, clen, max_ext=6):
+    """tblastn stops an alignment at mismatched ends (exendin-3's HSD against an exendin-4
+    gene's HGE). Unaligned residues at either end of the peptide (up to max_ext) are given
+    the codons that continue the first / last aligned exon, read from the genome, so they
+    show as identical or mismatch instead of unmapped. Marked ext=yes."""
+    m = [i for i, r in enumerate(rows) if r["codon_start"] != ""]
+    if not m:
+        return rows, 0
+    added = 0
+    for side in ("lead", "trail"):
+        if side == "lead":
+            k = m[0]
+            idx = list(range(k - 1, -1, -1))
+            ref = rows[k]
+        else:
+            k = m[-1]
+            idx = list(range(k + 1, len(rows)))
+            ref = rows[k]
+        if not idx or len(idx) > max_ext:
+            continue
+        for n, i in enumerate(idx, 1):
+            step = -3 * n if side == "lead" else 3 * n
+            if strand == "-":
+                step = -step
+            c0 = ref["codon_start"] + step
+            c1 = c0 + 2
+            if c0 < 1 or c1 > clen:
+                break
+            nt = faidx(fasta, contig, c0, c1)
+            if strand == "-":
+                nt = nt.translate(COMP)[::-1]
+            res = translate(nt)
+            r = rows[i]
+            r.update(codon_start=c0, codon_end=c1, exon=ref["exon"], gres=res,
+                     status="identical" if res == r["qres"] else "stop" if res == "*" else "mismatch", ext="yes")
+            added += 1
+    return rows, added
+
+
 def flanks(fasta, contig, strand, rows, clen, n_before=2, n_after=3):
     """Genome residues just before residue 1 and just after the last mapped residue (same exon)."""
     m = [r for r in rows if r["codon_start"] != ""]
@@ -402,6 +444,12 @@ def main():
         introns = []
         for x, y in zip(order, order[1:]):
             introns.append((y["lo"] - x["hi"] - 1) if L["strand"] == "+" else (x["lo"] - y["hi"] - 1))
+        best["rows"], n_ext = extend_ends(best["rows"], files["fasta"], L["contig"], L["strand"], clen[L["contig"]])
+        if n_ext:
+            best["ident"] = sum(r["status"] == "identical" for r in best["rows"])
+            best["mapped"] = sum(r["codon_start"] != "" and r["status"] != "gap" for r in best["rows"])
+            lo = min(lo, min(r["codon_start"] for r in best["rows"] if r["codon_start"] != ""))
+            hi = max(hi, max(r["codon_end"] for r in best["rows"] if r["codon_end"] != ""))
         fb, fa_ = flanks(files["fasta"], L["contig"], L["strand"], best["rows"], clen[L["contig"]])
         ov = G.overlaps(genes_on(L["contig"]), lo, hi)
         ru = results[1] if len(results) > 1 else None
@@ -438,7 +486,7 @@ def main():
     write("hsps.tsv", ["peptide", "exon", "qstart", "qend", "contig", "gstart", "gend", "strand", "bits", "qseq",
                        "sseq"], hsp_rows)
     write("residues.tsv", ["peptide", "qpos", "qres", "contig", "strand", "exon", "codon_start", "codon_end", "gres",
-                           "status", "ins_after"], res_rows)
+                           "status", "ins_after", "ext"], res_rows)
     with open(os.path.join(a.outdir, "genome.txt"), "w") as fh:
         fh.write(f"code\t{a.code}\naccession\t{acc}\nfasta\t{files['fasta']}\ngff\t{files['gff'] or ''}\n")
     N.info(f"wrote {a.outdir}/map.tsv, residues.tsv, hsps.tsv, candidates.tsv")

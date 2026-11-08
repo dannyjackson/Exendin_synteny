@@ -1,0 +1,8 @@
+>helospectin_I | exendin-1 | Helospectin I | Parker et al. 1984 J Biol Chem 259:11751; UniProt P04203; 38 aa; typical of H. horridum venom (Vandermeers et al. 1987)
+HSDATFTAEYSKLLAKLALQKYLESILGSSTSPRPPSS
+>helospectin_II | exendin-1 | Helospectin II | Parker et al. 1984 J Biol Chem 259:11751; helospectin I without Ser38; 37 aa
+HSDATFTAEYSKLLAKLALQKYLESILGSSTSPRPPS
+>helodermin | exendin-2 | Helodermin | Hoshino et al. 1984 FEBS Lett 178:233, Glu8,9 as corrected by Vandermeers et al. 1987; UniProt P04204; 35 aa, C-terminal amide
+HSDAIFTEEYSKLLAKLALQKYLASILGSRTSPPP
+>exendin_3 | exendin-3 | Exendin-3 | Eng et al. 1990 J Biol Chem 265:20259, H. horridum venom; UniProt P20394; 39 aa, C-terminal amide
+HSDGTFTSDLSKQMEEEAVRLFIEWLKNGGPSSGAPPPS

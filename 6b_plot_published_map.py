@@ -13,6 +13,10 @@ Figure of where the published Heloderma venom peptides are encoded in one genome
           colours, GCGL green, positional letters grey);
         - NCBI genes only with --ncbi (NCBI's exendin models are unreliable).
       A marker under each mapped peptide is joined to its pop-out.
+      For a genome other than HelSus (step 7, HelCha), --toga2-run draws TOGA2's
+      PROJECTIONS of the reference genes onto that genome (query_<code>/query_annotation.bed),
+      each named after its HelSus reference gene with its TOGA2 status; the boundaries are
+      the projections of SLC4A8 and AQP5 nearest the mappings.
       TOGA2 contig names (chr2) are translated to the genome's (NC_139459.1) with the NCBI
       sequence report, or --contig-map chr2=NC_139459.1. The two must be the same assembly:
       contig lengths in the TOGA2 GFF's ##sequence-region lines are checked against the
@@ -193,6 +197,10 @@ def main():
     ap.add_argument("--out", required=True, help="output prefix (.svg and .png)")
     ap.add_argument("--toga2-gff", help="the HelSus annotation TOGA2 projects from (EviAnn GFF3, ${HELSUS_EVIANN_GFF}): "
                     "drawn as the gene track and used for the boundaries")
+    ap.add_argument("--toga2-run", help="${TOGADIR}/target_HelSus: draw the TOGA2 PROJECTIONS of a query genome "
+                    "(query_<code>/query_annotation.bed) instead of the reference annotation; for genomes other "
+                    "than HelSus, e.g. HelCha. --toga2-gff then only names the reference genes")
+    ap.add_argument("--toga2-query", help="query name in --toga2-run [the 6a genome code]")
     ap.add_argument("--boundaries", default="SLC4A8,AQP5=LOC_00012326",
                     help="boundary genes in --toga2-gff, NAME or NAME=ID, as in 3c [SLC4A8,AQP5=LOC_00012326]")
     ap.add_argument("--contig-map", action="append", default=[], metavar="TOGA2=NCBI",
@@ -289,7 +297,44 @@ def main():
     contigs = sorted({m["contig"] for m in maps}, key=lambda c: min(int(m["start"]) for m in maps if m["contig"] == c))
     tracks = []                                        # (label, {ncbi contig: [genes]})
     bnd = {}                                           # boundary name -> (ncbi contig, start, end)
-    if a.toga2_gff:
+    if a.toga2_run:
+        # TOGA2 projections onto this (query) genome
+        if not a.toga2_gff:
+            sys.exit("[error] --toga2-run needs --toga2-gff (the reference GFF, for gene names and boundary IDs)")
+        q = a.toga2_query or info.get("code", "")
+        qdir = os.path.join(a.toga2_run, "query_" + q)
+        if not os.path.isdir(qdir):
+            sys.exit(f"[error] no {qdir} (give --toga2-query)")
+        notes = G.ref_gene_notes(a.toga2_gff)
+        raw = G.load_toga2_query(qdir, notes)
+        tg = defaultdict(list)
+        for tc, gs in raw.items():
+            tg[ncbi_name(tc)].extend(gs)
+        miss = [tc for tc in raw if ncbi_name(tc) not in clen]
+        if clen and miss and len(miss) == len(raw):
+            sys.exit(f"[error] none of the TOGA2 contig names of {q} (e.g. {miss[0]}) is in the genome FASTA; "
+                     "give --contig-map TOGA2=GENOME")
+        N.info(f"TOGA2 {q}: {sum(len(v) for v in tg.values())} projected genes on {len(tg)} contigs")
+        specs = [x.strip() for x in a.boundaries.split(",") if x.strip()]
+        found = G.find_genes(a.toga2_gff, [x for x in specs if "=" not in x])
+        mids = {c: sum((int(m["start"]) + int(m["end"])) / 2 for m in maps if m["contig"] == c) /
+                max(1, sum(1 for m in maps if m["contig"] == c)) for c in contigs}
+        for sp in specs:
+            n_, _, gid = sp.partition("=")
+            gid = gid or (found[n_][4] if n_ in found else "")
+            gid = gid.split(":")[-1]
+            if not gid:
+                N.warn(f"boundary {n_} not found in {a.toga2_gff}"); continue
+            cand = [(c, g_) for c, gs in tg.items() for g_ in gs if g_["name"] == gid]
+            if not cand:
+                N.warn(f"boundary {n_} ({gid}): no TOGA2 projection in {q}"); continue
+            c, g_ = min(cand, key=lambda x: (x[0] not in mids, abs((x[1]["start"] + x[1]["end"]) / 2
+                                                                    - mids.get(x[0], 0))))
+            bnd[n_] = (c, g_["start"], g_["end"])
+            N.info(f"TOGA2 boundary {n_}: {gid} projected to {c}:{g_['start']}-{g_['end']} ({g_['status']})"
+                   + (f"; {len(cand) - 1} other projection(s)" if len(cand) > 1 else ""))
+        tracks.append((f"TOGA2 genes ({q})", tg))
+    elif a.toga2_gff:
         specs = [x.strip() for x in a.boundaries.split(",") if x.strip()]
         found = G.find_genes(a.toga2_gff, specs)
         for sp in specs:
@@ -320,12 +365,12 @@ def main():
                 N.warn(f"no TOGA2 genes on {c} (TOGA2 names tried: {', '.join(to_toga.get(c, []) + [c])}); "
                        "give --contig-map TOGA2=NCBI")
         tracks.append(("TOGA2 genes", tg))
-    if a.ncbi or not a.toga2_gff:
+    if a.ncbi or not (a.toga2_gff or a.toga2_run):
         ng = {}
         for c in contigs + [v[0] for v in bnd.values()]:
             ng[c] = G.load_region(gff, c, 1, 10 ** 12) if gff and os.path.exists(gff) else []
         tracks.append(("NCBI genes", ng))
-    if not a.toga2_gff:                                # NCBI boundaries, as before
+    if not (a.toga2_gff or a.toga2_run):              # NCBI boundaries, as before
         bnames = [b.strip().upper() for b in a.boundary_genes.split(",") if b.strip()]
         for c in contigs:
             ms_ = [m for m in maps if m["contig"] == c]
@@ -337,7 +382,7 @@ def main():
     bnames_all = {k.upper() for k in bnd}
 
     # mappings against the TOGA2 genes (consistency of the two coordinate systems)
-    if a.toga2_gff:
+    if a.toga2_gff or a.toga2_run:
         hits = 0
         for m in maps:
             ov = G.overlaps(tracks[0][1].get(m["contig"], []), int(m["start"]), int(m["end"]))
@@ -404,7 +449,8 @@ def main():
         regions.append((c, max(1, rlo), rhi, True))
     else:
         if a.toga2_gff:
-            N.warn("boundary genes not both found on one contig: panel A is drawn around the mappings")
+            N.warn("boundary genes not both found on one contig: panel A is drawn around the mappings"
+                   + (" (" + "; ".join(f"{k} on {v[0]}:{v[1]:,}" for k, v in bnd.items()) + ")" if bnd else ""))
         for c in contigs:
             ms_ = [m for m in maps if m["contig"] == c]
             bs_ = [v for v in bnd.values() if v[0] == c]
@@ -537,6 +583,13 @@ def main():
                 svg.text(xm, ya + 38, letters[g], size=13, anchor="middle", weight="bold", fill=col)
                 markers.setdefault(g, []).append((xm, ya + 42))
         y = ya + 90
+    unbounded = [k for k, v in bnd.items() if not any(v[0] == r[0] and r[3] for r in regions)]
+    if unbounded and not any(r[3] for r in regions):
+        svg.text(X0, y - 4, "Boundary genes (TOGA2): " + "; ".join(
+            f"{k} on {v[0]}:{fmt(v[1])}" for k, v in bnd.items())
+            + (" (different contigs: the region is drawn around the mappings)" if len(bnd) > 1 else ""),
+            size=10.5, fill="#7A5C00")
+        y += 16
     if elsewhere:
         svg.text(X0, y - 4, "Mapped outside this region: " + "; ".join(
             f"{m['label']} {m['contig']}:{fmt(m['start'])}" for m in elsewhere), size=10.5, fill="#C0392B")
@@ -593,7 +646,7 @@ def main():
             # gene models, one row each, per track
             for tlab, src in tracks:
                 near = [gg for gg in src.get(w["contig"], []) if gg["end"] >= lo and gg["start"] <= hi]
-                s.text(px + 12, yy + 4, tlab, size=10, fill="#555")
+                s.text(px + 12, yy + 4, tlab.split(" (")[0], size=10, fill="#555")
                 for gg in near:
                     grp = N.name_group(gg["description"] + " " + gg["name"])
                     gcol = colour(grp) if N.is_family(grp) else "#8E878C"
@@ -751,7 +804,7 @@ def main():
                      + (f", intron{'s' if len(intr) > 1 else ''} " + ", ".join(f"{int(x):,} bp" for x in intr)
                         if intr else ""),
                      f"   before: …{m['before']}   after: {m['after']}…",
-                     *[f"   {tlab[:-6] if tlab.endswith(' genes') else tlab} gene: "
+                     *[f"   {tlab.split(' genes')[0]} gene: "
                        + ("; ".join(f"{G.gene_label(g_)}: {w_}" for g_, w_ in
                                     G.overlaps(src.get(m["contig"], []), int(m["start"]), int(m["end"])))
                           or "none") for tlab, src in tracks],
@@ -794,7 +847,8 @@ def main():
     H = int(max(panel_bottoms) + 30)
     svg.text(M, H - 10, "Mapping: 6a_map_published.py (genome-wide tblastn, then a sensitive tblastn in a window "
              "around the best loci; one codon per peptide residue). Genes: "
-             + ", ".join(("TOGA2 reference annotation (EviAnn)" if t_.startswith("TOGA2") else "NCBI RefSeq GFF")
+             + ", ".join(("TOGA2 projections from the HelSus reference" if t_.startswith("TOGA2 genes (")
+                          else "TOGA2 reference annotation (EviAnn)" if t_.startswith("TOGA2") else "NCBI RefSeq GFF")
                          for t_, _ in tracks)
              + (". Reciprocal BLAST: step 4 curated loci" + (", step 5 names" if a.names else "") if curated else "")
              + ".", size=9.5, fill="#777")

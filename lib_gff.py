@@ -14,7 +14,7 @@ Minimal GFF3 reader for step 6. Not run on its own.
 Works on NCBI RefSeq GFF3 and on the EviAnn GFF3 TOGA2 projects from (gene names there
 are in Note= or Name=; IDs like LOC_00012325).
 """
-import gzip
+import gzip, os
 from urllib.parse import unquote
 
 GENE_TYPES = {"gene", "pseudogene"}
@@ -180,4 +180,86 @@ def sequence_regions(gff):
                     out[f[1]] = int(f[3])
             elif not line.startswith("#"):
                 break
+    return out
+
+
+def ref_gene_notes(gff):
+    """{gene ID: description} of a reference GFF (EviAnn: Note=), IDs as TOGA2 uses them."""
+    out = {}
+    op = gzip.open(gff, "rt") if gff.endswith(".gz") else open(gff)
+    with op as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split("\t")
+            if len(f) < 9 or f[2] not in GENE_TYPES:
+                continue
+            a = _attrs(f[8])
+            gid = a.get("ID", "")
+            d = a.get("Name") if a.get("Name") and a.get("Name") != gid else ""
+            note = a.get("description") or a.get("Note") or ""
+            out[gid] = out[gid.split(":")[-1]] = (f"{d}: {note}" if d and note else d or note)
+    return out
+
+
+def load_toga2_query(qdir, notes=None, merge_bp=20000):
+    """TOGA2 projections of one query (query_<code>/query_annotation.bed, BED12) as genes
+    {contig: [gene]}, in load_region's format. A projection belongs to the reference gene
+    in its name (LOC_00012325-mRNA-1.xxx -> LOC_00012325); projections of one reference gene
+    on one contig within merge_bp of each other are one gene, named after the reference
+    gene, with its reference description (notes) and TOGA2 status (loss_summary.tsv)."""
+    def op(p):
+        return gzip.open(p, "rt") if p.endswith(".gz") else open(p)
+
+    def first(name):
+        for p in (os.path.join(qdir, name), os.path.join(qdir, name + ".gz")):
+            if os.path.exists(p):
+                return p
+        return None
+    status = {}
+    p = first("loss_summary.tsv")
+    if p:
+        with op(p) as fh:
+            for line in fh:
+                t = line.rstrip("\n").split("\t")
+                if len(t) >= 3 and t[0] == "PROJECTION":
+                    status[t[1]] = t[2]
+    p = first("query_annotation.bed")
+    if not p:
+        raise FileNotFoundError(f"no query_annotation.bed in {qdir}")
+    rank = {"FI": 0, "I": 1, "PI": 2, "UL": 3, "M": 4, "L": 5, "PG": 6, "N": 7}
+    by = {}
+    with op(p) as fh:
+        for line in fh:
+            t = line.rstrip("\n").split("\t")
+            if len(t) < 12:
+                continue
+            c, s0, e0, name, strand = t[0], int(t[1]), int(t[2]), t[3], t[5]
+            ts, te = int(t[6]), int(t[7])
+            sizes = [int(x) for x in t[10].strip(",").split(",") if x]
+            starts = [int(x) for x in t[11].strip(",").split(",") if x]
+            exons = [(s0 + b + 1, s0 + b + z) for b, z in zip(starts, sizes)]
+            cds = [(max(s, ts + 1), min(e, te)) for s, e in exons if min(e, te) >= max(s, ts + 1)]
+            ref = name.split("-mRNA")[0].split("#")[0]
+            st = status.get(name, "NA")
+            tx = dict(id=name, parent=ref, product="", start=s0 + 1, end=e0, exons=exons, cds=cds, status=st)
+            key = (c, ref, strand)
+            for g in by.setdefault(key, []):
+                if s0 + 1 <= g["end"] + merge_bp and e0 >= g["start"] - merge_bp:
+                    g["tx"].append(tx); g["start"] = min(g["start"], s0 + 1); g["end"] = max(g["end"], e0)
+                    break
+            else:
+                by[key].append(dict(id=f"{ref}@{c}:{s0 + 1}", name=ref, description="", biotype="toga2",
+                                    start=s0 + 1, end=e0, strand=strand, tx=[tx], contig=c))
+    out = {}
+    for (c, ref, _), gs in by.items():
+        for g in gs:
+            g["tx"].sort(key=lambda x: (rank.get(x["status"], 9), -sum(e - s + 1 for s, e in x["cds"])))
+            best = g["tx"][0]["status"]
+            d = (notes or {}).get(ref, "")
+            g["description"] = (d + " " if d else "") + f"[TOGA2 {best}]"
+            g["status"] = best
+            out.setdefault(c, []).append(g)
+    for c in out:
+        out[c].sort(key=lambda g: g["start"])
     return out
