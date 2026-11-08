@@ -163,6 +163,9 @@ def main():
     a = ap.parse_args()
 
     md = a.map_dir
+    for f in ("genome.txt", "map.tsv", "residues.tsv"):
+        if not os.path.exists(os.path.join(md, f)):
+            sys.exit(f"[error] {md}/{f} missing: run 6a_map_published.py to completion first")
     info = dict(l.rstrip("\n").split("\t", 1) for l in open(os.path.join(md, "genome.txt")) if "\t" in l)
     gff = a.gff or info.get("gff", "")
     fasta = info.get("fasta", "")

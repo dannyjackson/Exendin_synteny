@@ -10,9 +10,9 @@ asks where in the genome each residue is encoded, so the gene behind every publi
 can be seen directly, with no gene model in between.
 
 Method, per peptide
-  1. Genome-wide tblastn (-seg no, -comp_based_stats 0, word size 3, e <= --evalue). Short
-     queries need these: with the defaults the Pro-rich C-terminal residues are masked or
-     the e-value is never reached.
+  1. Genome-wide tblastn (-seg no, -comp_based_stats 0, e <= --evalue). Short queries
+     need these: with the defaults the Pro-rich residues are masked. Only the main exon
+     has to be found here; the short exons are found in step 3.
   2. Hits on the same contig and strand within --cluster-kb are grouped into candidate
      loci; each is scored by its best collinear chain of HSPs around the locus's strongest
      HSP (the anchor): query order matches genomic order on the strand, introns
@@ -65,7 +65,11 @@ COMP = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 def run(cmd):
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
-        sys.exit(f"[error] {' '.join(cmd[:3])} ... failed:\n{r.stderr.strip()[-400:]}")
+        why = r.stderr.strip()[-600:] or r.stdout.strip()[-300:]
+        if r.returncode < 0 or r.returncode in (137, 139):
+            why += (f"\n(killed: exit {r.returncode}. Usually out of memory or the job's time limit: "
+                    "ask for more, e.g. sinteractive --mem=32g --cpus-per-task=8)")
+        sys.exit(f"[error] {' '.join(cmd)}\nexit {r.returncode}\n{why}")
     return r.stdout
 
 
@@ -280,7 +284,8 @@ def main():
     ap.add_argument("--peptides", default=os.path.join(HERE, "6_published_peptides.fa"))
     ap.add_argument("--blastdb", help="nucleotide BLAST db [${GENOMEDIR}/blastdb/<code>_<accession>, as 4b]")
     ap.add_argument("--threads", type=int, default=8)
-    ap.add_argument("--evalue", type=float, default=10.0, help="genome-wide e-value cut-off [10]")
+    ap.add_argument("--evalue", type=float, default=1.0, help="genome-wide e-value cut-off [1]")
+    ap.add_argument("--max-targets", type=int, default=500, help="genome-wide -max_target_seqs [500]")
     ap.add_argument("--min-bits", type=float, default=20.0, help="genome-wide HSPs below this are ignored [20]")
     ap.add_argument("--cluster-kb", type=float, default=10.0, help="hits this close form one candidate locus [10]")
     ap.add_argument("--max-intron-bp", type=int, default=10000)
@@ -321,10 +326,10 @@ def main():
     raw = os.path.join(a.outdir, "genome_hits.tsv")
     if not os.path.exists(raw):
         N.info(f"genome-wide tblastn against {db} ...")
-        out = run(["tblastn", "-query", qfa, "-db", db, "-seg", "no", "-comp_based_stats", "0", "-word_size", "3",
-                   "-evalue", str(a.evalue), "-max_target_seqs", "5000", "-num_threads", str(a.threads),
-                   "-outfmt", OUTFMT])
-        open(raw + ".tmp", "w").write(out); os.replace(raw + ".tmp", raw)
+        run(["tblastn", "-query", qfa, "-db", db, "-seg", "no", "-comp_based_stats", "0",
+             "-evalue", str(a.evalue), "-max_target_seqs", str(a.max_targets), "-num_threads", str(a.threads),
+             "-outfmt", OUTFMT, "-out", raw + ".tmp"])
+        os.replace(raw + ".tmp", raw)
     else:
         N.info(f"re-using {raw} (delete it to search again)")
     allhits = [h for h in parse(open(raw).read()) if h["bits"] >= a.min_bits]
