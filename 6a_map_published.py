@@ -54,7 +54,7 @@ sys.path.insert(0, HERE)
 import lib_exendin_names as N  # noqa: E402
 import lib_gff as G            # noqa: E402
 
-OUTFMT = "6 qseqid sseqid qstart qend sstart send pident length evalue bitscore qseq sseq"
+OUTFMT = "6 qseqid saccver qstart qend sstart send pident length evalue bitscore qseq sseq"
 CODE = {a + b + c: aa for (a, b, c), aa in zip(
     [(x, y, z) for x in "TCAG" for y in "TCAG" for z in "TCAG"],
     "FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG")}
@@ -93,6 +93,12 @@ def read_peptides(path):
     return peps
 
 
+def acc_of(sid):
+    """'ref|NC_139459.1|' (sseqid of a -parse_seqids database) -> 'NC_139459.1'."""
+    parts = [x for x in sid.split("|") if x]
+    return parts[1] if len(parts) >= 2 and parts[0] in ("ref", "gb", "emb", "dbj", "lcl", "gnl") else sid
+
+
 def parse(out, offset=None):
     """tblastn -outfmt OUTFMT -> HSP dicts; offset=(contig, window_start) for -subject searches."""
     hits = []
@@ -101,7 +107,7 @@ def parse(out, offset=None):
         if len(f) < 12:
             continue
         ss, se = int(f[4]), int(f[5])
-        contig = f[1]
+        contig = acc_of(f[1])
         if offset:
             contig, w0 = offset
             ss, se = w0 + ss - 1, w0 + se - 1
