@@ -64,7 +64,13 @@ cd ${WORK}/published_map
 
 python3 ${SCRIPTDIR}/6a_map_published.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
     --code HelSus --peptides ${SCRIPTDIR}/6_published_peptides.fa --threads 8 --outdir map
-python3 ${SCRIPTDIR}/6b_plot_published_map.py --map-dir map --out published_map
+
+python3 ${SCRIPTDIR}/6b_plot_published_map.py --map-dir map --out published_map \
+    --toga2-gff ${HELSUS_EVIANN_GFF} --boundaries SLC4A8,AQP5=LOC_00012326 \
+    --curated ${WORK}/reciprocal_blast/reciprocal/curated_loci.tsv \
+    --names ${WORK}/nomenclature/names_names.tsv 2> published_map.log
+cat published_map.log
+
 ```
 The genome-wide search reuses step 4's BLAST database (`${GENOMEDIR}/blastdb/HelSus_<accession>`)
 and takes a few minutes. Its hits are kept in `map/genome_hits.tsv`, so changing a

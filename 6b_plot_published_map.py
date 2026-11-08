@@ -3,26 +3,42 @@
 Figure of where the published Heloderma venom peptides are encoded in one genome (from 6a).
 
   A   Genomic context. Top: the whole contig (chromosome) with the region marked. Below:
-      the region, with every NCBI gene in it (exendin-family genes in their name colour,
-      genes carrying a mapped peptide outlined) and SLC4A8 / AQP5 if they are within
-      --context-max-kb. A marker under each mapped peptide is joined to its pop-out.
+      the region from SLC4A8 to AQP5 (+/- --context-pad-kb), the two boundary genes taken
+      from the TOGA2 reference annotation (--toga2-gff, the EviAnn GFF that TOGA2 projects
+      from; --boundaries as in 3c). Tracks:
+        - TOGA2 genes: every gene of that annotation in the region (exendin-family genes in
+          their name colour, genes carrying a mapped peptide outlined);
+        - Reciprocal BLAST: the step-4 curated loci of this species (--curated), labelled
+          and coloured by their step-5 names if --names is given (EX1-EX4 in the exendin
+          colours, GCGL green, positional letters grey);
+        - NCBI genes only with --ncbi (NCBI's exendin models are unreliable).
+      A marker under each mapped peptide is joined to its pop-out.
+      TOGA2 contig names (chr2) are translated to the genome's (NC_139459.1) with the NCBI
+      sequence report, or --contig-map chr2=NC_139459.1. The two must be the same assembly:
+      contig lengths in the TOGA2 GFF's ##sequence-region lines are checked against the
+      genome, and the log lists the TOGA2 gene each peptide falls in (a published exendin
+      landing in no TOGA2 gene means the coordinates do not match).
   B-  One pop-out per published exendin (exendin-1, -2, -4 ... in the order of the peptide
       file). Each has
-        - the locus: NCBI gene models (thin = exon, thick = CDS) and, for each peptide, the
+        - the locus: TOGA2 (and with --ncbi, NCBI) gene models (thin = exon, thick = CDS),
+          the curated reciprocal-BLAST loci, and, for each peptide, the
           genomic blocks its residues map to. Minus-strand loci are drawn reversed so the
           peptide reads left to right in every panel;
         - the alignment: peptide (top) over the genome's translation of the codons it maps
           to (bottom), one block per exon, the intron length between blocks; in grey, the
           genome residues just before residue 1 (processing site) and just after the last
           residue;
-        - identity, introns, the overlapping NCBI gene and exon, and the runner-up locus.
+        - identity, introns, the TOGA2 gene and exon and the reciprocal-BLAST locus each
+          peptide falls in, and the runner-up locus.
       When a pop-out has more than one peptide (helospectin I and II), the first (longest)
       is the reference and the others are aligned to it: residues encoded by the SAME
       codons in both are drawn in the exendin colour, residues that map to different codons,
       or exist in only one peptide, in magenta, in the locus blocks and in the alignment.
 
 Usage
-  python3 6b_plot_published_map.py --map-dir map --out published_map
+  python3 6b_plot_published_map.py --map-dir map --out published_map \
+      --toga2-gff ${HELSUS_EVIANN_GFF} --boundaries SLC4A8,AQP5=LOC_00012326 \
+      --curated ../reciprocal_blast/reciprocal/curated_loci.tsv --names ../nomenclature/names_names.tsv
 Writes <out>.svg and <out>.png.
 """
 import argparse, csv, os, sys
@@ -175,11 +191,24 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--map-dir", required=True, help="6a output")
     ap.add_argument("--out", required=True, help="output prefix (.svg and .png)")
-    ap.add_argument("--gff", help="override the GFF recorded by 6a")
-    ap.add_argument("--boundary-genes", default="SLC4A8,AQP5")
+    ap.add_argument("--toga2-gff", help="the HelSus annotation TOGA2 projects from (EviAnn GFF3, ${HELSUS_EVIANN_GFF}): "
+                    "drawn as the gene track and used for the boundaries")
+    ap.add_argument("--boundaries", default="SLC4A8,AQP5=LOC_00012326",
+                    help="boundary genes in --toga2-gff, NAME or NAME=ID, as in 3c [SLC4A8,AQP5=LOC_00012326]")
+    ap.add_argument("--contig-map", action="append", default=[], metavar="TOGA2=NCBI",
+                    help="TOGA2 contig name -> genome contig (e.g. chr2=NC_139459.1). Default: from the NCBI "
+                         "sequence report (chromosome names), else the names as they are")
+    ap.add_argument("--curated", help="step 4 curated loci (reciprocal_blast/reciprocal/curated_loci.tsv): a track of "
+                    "the curated genes")
+    ap.add_argument("--names", help="step 5 names (nomenclature/names_names.tsv): label curated genes by their new names")
+    ap.add_argument("--ncbi", action="store_true", help="also draw the NCBI genes (off by default: NCBI exendin models "
+                    "are unreliable)")
+    ap.add_argument("--force", action="store_true", help="draw even if the TOGA2 coordinates fail the assembly check")
+    ap.add_argument("--gff", help="override the NCBI GFF recorded by 6a")
+    ap.add_argument("--boundary-genes", default="SLC4A8,AQP5", help="NCBI boundary names, used only without --toga2-gff")
     ap.add_argument("--context-max-kb", type=float, default=3000.0,
-                    help="panel A reaches out to the boundary genes if they are within this distance [3000]")
-    ap.add_argument("--context-pad-kb", type=float, default=15.0)
+                    help="without --toga2-gff: reach out to NCBI boundary genes within this distance [3000]")
+    ap.add_argument("--context-pad-kb", type=float, default=5.0, help="padding outside the boundary genes [5]")
     ap.add_argument("--locus-pad-bp", type=int, default=600)
     ap.add_argument("--width", type=int, default=1900)
     ap.add_argument("--png-width", type=int, default=3800)
@@ -230,14 +259,122 @@ def main():
             cls[pid] = {int(r["qpos"]): ("same" if r["codon_start"] and (r["contig"], r["codon_start"]) in others
                                          else "diff") for r in res[pid]}
 
-    # ---------------- genes ----------------
+    # ---------------- gene tracks ----------------
+    import json
+    fai_names = set(clen)
+    rep_path = os.path.join(os.path.dirname(fasta), "sequence_report.jsonl") if fasta else ""
+    to_ncbi = {}
+    if rep_path and os.path.exists(rep_path):
+        for line in open(rep_path):
+            d = json.loads(line)
+            acc = d.get("refseqAccession") if d.get("refseqAccession") in fai_names else d.get("genbankAccession")
+            if not acc:
+                continue
+            for k in ("chrName", "sequenceName", "genbankAccession", "refseqAccession", "ucscStyleName"):
+                v = d.get(k)
+                if v:
+                    to_ncbi[v] = acc
+                    if k == "chrName":
+                        to_ncbi["chr" + v] = acc; to_ncbi["Chr" + v] = acc
+    for cm in a.contig_map:
+        t, _, n_ = cm.partition("=")
+        to_ncbi[t.strip()] = n_.strip()
+    to_toga = defaultdict(list)
+    for t, n_ in to_ncbi.items():
+        to_toga[n_].append(t)
+
+    def ncbi_name(t):
+        return to_ncbi.get(t, t)
+
     contigs = sorted({m["contig"] for m in maps}, key=lambda c: min(int(m["start"]) for m in maps if m["contig"] == c))
-    genes = {}
-    for c in contigs:
-        genes[c] = G.load_region(gff, c, 1, 10 ** 12) if gff and os.path.exists(gff) else []
-        if not genes[c]:
-            N.warn(f"no GFF genes for {c} ({gff or 'no GFF'})")
-    bnames = [b.strip().upper() for b in a.boundary_genes.split(",") if b.strip()]
+    tracks = []                                        # (label, {ncbi contig: [genes]})
+    bnd = {}                                           # boundary name -> (ncbi contig, start, end)
+    if a.toga2_gff:
+        specs = [x.strip() for x in a.boundaries.split(",") if x.strip()]
+        found = G.find_genes(a.toga2_gff, specs)
+        for sp in specs:
+            n_ = sp.split("=")[0]
+            if n_ in found:
+                tc, st, en, strand_, gid = found[n_]
+                bnd[n_] = (ncbi_name(tc), st, en)
+                N.info(f"TOGA2 boundary {n_}: {gid} {tc}:{st}-{en} ({strand_}) -> {ncbi_name(tc)}")
+            else:
+                N.warn(f"TOGA2 boundary {sp} not found in {a.toga2_gff}")
+        # assembly check: TOGA2 contig lengths (##sequence-region) against the genome
+        sr = G.sequence_regions(a.toga2_gff)
+        bad = [(t, l, clen.get(ncbi_name(t))) for t, l in sr.items()
+               if ncbi_name(t) in clen and clen[ncbi_name(t)] != l]
+        if bad and not a.force:
+            sys.exit("[error] the TOGA2 annotation and the genome differ in contig length, so their coordinates "
+                     "are not interchangeable: " + ", ".join(f"{t} {l:,} vs {ncbi_name(t)} {g_:,}" for t, l, g_ in bad[:3])
+                     + " (use --force to draw anyway)")
+        tg = {}
+        need = set(contigs) | {v[0] for v in bnd.values()}
+        for c in need:
+            tg[c] = []
+            for t in to_toga.get(c, []) + [c]:
+                tg[c] = G.load_region(a.toga2_gff, t, 1, 10 ** 12)
+                if tg[c]:
+                    break
+            if not tg[c]:
+                N.warn(f"no TOGA2 genes on {c} (TOGA2 names tried: {', '.join(to_toga.get(c, []) + [c])}); "
+                       "give --contig-map TOGA2=NCBI")
+        tracks.append(("TOGA2 genes", tg))
+    if a.ncbi or not a.toga2_gff:
+        ng = {}
+        for c in contigs + [v[0] for v in bnd.values()]:
+            ng[c] = G.load_region(gff, c, 1, 10 ** 12) if gff and os.path.exists(gff) else []
+        tracks.append(("NCBI genes", ng))
+    if not a.toga2_gff:                                # NCBI boundaries, as before
+        bnames = [b.strip().upper() for b in a.boundary_genes.split(",") if b.strip()]
+        for c in contigs:
+            ms_ = [m for m in maps if m["contig"] == c]
+            lo_, hi_ = min(int(m["start"]) for m in ms_), max(int(m["end"]) for m in ms_)
+            for g_ in tracks[-1][1].get(c, []):
+                if g_["name"].upper() in bnames and \
+                        min(abs(g_["start"] - hi_), abs(g_["end"] - lo_)) <= a.context_max_kb * 1000:
+                    bnd.setdefault(g_["name"], (c, g_["start"], g_["end"]))
+    bnames_all = {k.upper() for k in bnd}
+
+    # mappings against the TOGA2 genes (consistency of the two coordinate systems)
+    if a.toga2_gff:
+        hits = 0
+        for m in maps:
+            ov = G.overlaps(tracks[0][1].get(m["contig"], []), int(m["start"]), int(m["end"]))
+            hits += bool(ov)
+            N.info(f"{m['peptide']} {m['contig']}:{m['start']}-{m['end']} in TOGA2 genes: "
+                   + ("; ".join(f"{G.gene_label(g_)}: {w}" for g_, w in ov) or "none"))
+        if not hits:
+            N.warn("no mapped peptide falls in a TOGA2 gene: check that the TOGA2 annotation is on this assembly")
+
+    # curated reciprocal-BLAST loci (step 4), named by step 5 if given
+    code = info.get("code", "")
+    newname = {}
+    if a.names:
+        for r in read_tsv(a.names):
+            newname[r["old_name"]] = r["new_name"]
+    curated = defaultdict(list)
+    if a.curated:
+        for r in read_tsv(a.curated):
+            if r["species"] != code:
+                continue
+            nm = newname.get(r["name"], r["name"])
+            suf = nm[len(code) + 1:] if nm.startswith(code + "_") else nm
+            if a.names:
+                import re as _re
+                mm = _re.match(r"EX(\d)", suf)
+                grp = f"exendin-{mm.group(1)}" if mm else ("GCGL (glucagon-like)" if suf.startswith("GCGL")
+                                                           else "no close published match")
+            else:
+                grp = r["group"]
+            curated[r["contig"]].append(dict(name=nm, short=suf, start=int(r["g_start"]), end=int(r["g_end"]),
+                                             strand=r["strand"], group=grp, old=r["name"],
+                                             step4=r["group"], placement=r.get("placement", "")))
+        N.info(f"{sum(len(v) for v in curated.values())} curated {code} loci"
+               + (f", named from {a.names}" if a.names else ""))
+
+    def curated_over(c, lo, hi):
+        return [k for k in curated.get(c, []) if k["end"] >= lo and k["start"] <= hi]
 
     W, M = a.width, 40
     svg = Svg()
@@ -252,18 +389,31 @@ def main():
     y += 40
     X0, X1 = M + 150, W - M - 30
     markers = {}                                  # group -> list of (x, y) marker positions in A
-    for c in contigs:
-        ms = [m for m in maps if m["contig"] == c]
-        lo = min(int(m["start"]) for m in ms)
-        hi = max(int(m["end"]) for m in ms)
-        bs = [g for g in genes[c] if g["name"].upper() in bnames
-              and min(abs(g["start"] - hi), abs(g["end"] - lo)) <= a.context_max_kb * 1000]
-        # genes that carry a mapped peptide are shown whole (if not absurdly long)
-        carry = [g for g in genes[c] if any(g["end"] >= int(m["start"]) and g["start"] <= int(m["end"]) for m in ms)
-                 and g["end"] - g["start"] <= a.context_max_kb * 1000]
-        rlo = min([lo] + [g["start"] for g in bs + carry]) - int(a.context_pad_kb * 1000)
-        rhi = max([hi] + [g["end"] for g in bs + carry]) + int(a.context_pad_kb * 1000)
-        rlo = max(1, rlo)
+    regions = []                                  # (contig, lo, hi, bounded)
+    bctg = {v[0] for v in bnd.values()}
+    if len(bnd) >= 2 and len(bctg) == 1:
+        c = bctg.pop()
+        rlo = min(v[1] for v in bnd.values()) - int(a.context_pad_kb * 1000)
+        rhi = max(v[2] for v in bnd.values()) + int(a.context_pad_kb * 1000)
+        inside = [m for m in maps if m["contig"] == c]
+        out_ = [m for m in inside if int(m["end"]) < rlo or int(m["start"]) > rhi]
+        if out_:
+            N.warn("mapped outside the boundary genes (region widened): " + ", ".join(m["peptide"] for m in out_))
+            rlo = min([rlo] + [int(m["start"]) - 2000 for m in out_])
+            rhi = max([rhi] + [int(m["end"]) + 2000 for m in out_])
+        regions.append((c, max(1, rlo), rhi, True))
+    else:
+        if a.toga2_gff:
+            N.warn("boundary genes not both found on one contig: panel A is drawn around the mappings")
+        for c in contigs:
+            ms_ = [m for m in maps if m["contig"] == c]
+            bs_ = [v for v in bnd.values() if v[0] == c]
+            regions.append((c, max(1, min([int(m["start"]) for m in ms_] + [v[1] for v in bs_]) - 15000),
+                            max([int(m["end"]) for m in ms_] + [v[2] for v in bs_]) + 15000, False))
+    elsewhere = [m for m in maps if not any(m["contig"] == r[0] and int(m["end"]) >= r[1] and int(m["start"]) <= r[2]
+                                            for r in regions)]
+    for c, rlo, rhi, bounded in regions:
+        ms = [m for m in maps if m["contig"] == c and int(m["end"]) >= rlo and int(m["start"]) <= rhi]
         L = clen.get(c, max(rhi, 1))
         rhi = min(rhi, L)
         # whole contig
@@ -283,50 +433,89 @@ def main():
         if hx1 - hx0 < 4:
             hx0, hx1 = (hx0 + hx1) / 2 - 2, (hx0 + hx1) / 2 + 2
         svg.rect(hx0, yc - 9, hx1 - hx0, 18, "none", stroke="#D9643A", sw=2, rx=2)
-        ya = yc + 120                             # region axis
-        svg.poly([(hx0, yc + 9), (hx1, yc + 9), (X1, ya - 62), (X0, ya - 62)], fill="#F6F2F1", stroke="#C9C2C6",
-                 dash="3,3")
-        svg.text(X0 - 12, ya + 4, f"{rlo / 1e6:.3f}–{rhi / 1e6:.3f} Mb", size=10, anchor="end", fill="#666")
+        ytop = yc + 46                            # top of the zoomed region
 
         def XA(p, rlo=rlo, rhi=rhi):
             return X0 + (p - rlo) / (rhi - rlo) * (X1 - X0)
-        svg.line(X0, ya, X1, ya, stroke="#BBB", sw=1)
+        rows_y = []
+        yr = ytop + 58                            # first gene track axis (labels above it)
+        for lab_, src in tracks:
+            rows_y.append((lab_, src, yr)); yr += 76
+        ycur = yr - 76 + (40 if curated else 0)   # curated track axis
+        svg.poly([(hx0, yc + 9), (hx1, yc + 9), (X1, ytop), (X0, ytop)], fill="#F6F2F1", stroke="#C9C2C6",
+                 dash="3,3")
+        svg.text(X0 - 12, ytop + 14, f"{rlo / 1e6:.3f}–{rhi / 1e6:.3f} Mb", size=10, anchor="end", fill="#666")
+        if bounded:
+            svg.text(X0 - 12, ytop + 27, "SLC4A8 to AQP5" if {"SLC4A8", "AQP5"} <= bnames_all else
+                     " to ".join(bnd), size=9.5, anchor="end", fill="#666", italic=True)
+        mapped_ids = set()
+        for lab_, src, ya in rows_y:
+            svg.text(X0 - 12, ya + 4, lab_, size=10.5, anchor="end", weight="bold", fill="#444")
+            svg.line(X0, ya, X1, ya, stroke="#BBB", sw=1)
+            rows_end = [-1e9] * 3
+            for g in src.get(c, []):
+                if g["end"] < rlo or g["start"] > rhi:
+                    continue
+                carries = any(g["end"] >= int(m["start"]) and g["start"] <= int(m["end"]) for m in ms)
+                if carries:
+                    mapped_ids.add(g["id"])
+                grp = N.name_group(g["description"] + " " + g["name"])
+                fam = N.is_family(grp)
+                isb = g["name"].upper() in bnames_all or any(g["start"] == v[1] and g["end"] == v[2] and v[0] == c
+                                                            for v in bnd.values())
+                col = colour(grp) if fam else ("#3A3238" if isb else "#8E878C")
+                draw_gene(svg, g, XA, ya, False, col, outline="#1E1A1D" if carries else None, label=False,
+                          xlim=(X0, X1))
+                xm = (max(XA(g["start"]), X0) + min(XA(g["end"]), X1)) / 2
+                bname = next((k for k, v in bnd.items() if v[0] == c and v[1] == g["start"] and v[2] == g["end"]), None)
+                lab = g["name"]
+                if bname and bname.upper() != g["name"].upper():
+                    lab = f"{bname} ({g['name']})"
+                elif fam:
+                    lab = f"{g['name']} ({N.short_label(g['description']) or grp})"
+                elif "uncharacterized" in g["description"].lower():
+                    lab += " (uncharacterized)"
+                w = text_w(lab, 9.5)
+                for k in range(len(rows_end)):
+                    if xm - w / 2 > rows_end[k] + 4:
+                        rows_end[k] = xm + w / 2
+                        ly = ya - 16 - 13 * k
+                        svg.line(xm, ya - 9, xm, ly + 3, stroke="#CCC", sw=0.6)
+                        svg.text(xm, ly, lab, size=9.5, anchor="middle", fill=col if (fam or isb) else "#444",
+                                 weight="bold" if (fam or isb or carries) else "normal")
+                        break
+        if curated:
+            svg.text(X0 - 12, ycur + 4, "Reciprocal BLAST", size=10.5, anchor="end", weight="bold", fill="#444")
+            svg.text(X0 - 12, ycur + 17, "(step 4 curated" + (", step 5 names)" if a.names else ")"), size=9,
+                     anchor="end", fill="#666")
+            svg.line(X0, ycur, X1, ycur, stroke="#BBB", sw=1)
+            rows_end = [-1e9] * 2
+            for k_ in sorted(curated.get(c, []), key=lambda k_: k_["start"]):
+                if k_["end"] < rlo or k_["start"] > rhi:
+                    continue
+                x0_, x1_ = XA(k_["start"]), XA(k_["end"])
+                kc = colour(k_["group"])
+                svg.rect(x0_, ycur - 7, max(x1_ - x0_, 4), 14, kc, rx=2)
+                xm = (x0_ + x1_) / 2
+                w = text_w(k_["short"], 9.5)
+                for k in range(len(rows_end)):
+                    if xm - w / 2 > rows_end[k] + 4:
+                        rows_end[k] = xm + w / 2
+                        svg.text(xm, ycur + 21 + 12 * k, k_["short"], size=9.5, anchor="middle", weight="bold",
+                                 fill=kc if kc not in ("#A0A0A0", "#C8C8C8") else "#666")
+                        break
+            ylast = ycur + 34
+        else:
+            ylast = rows_y[-1][2] if rows_y else ytop + 58
         # scale bar
         span = rhi - rlo
         sb = 10 ** int(len(str(int(span / 5))) - 1)
         sb = sb * 5 if span / (sb * 5) >= 3 else sb
+        ya = ylast
         svg.line(X1 - (X1 - X0) * sb / span, ya + 62, X1, ya + 62, stroke="#444", sw=2)
         svg.text(X1, ya + 76, f"{sb / 1000:g} kb", size=10, anchor="end")
-        # genes in region; labels in rows above the axis, no overlaps
-        rows_end = [-1e9] * 4
-        mapped_genes = set()
-        for m in ms:
-            for g in genes[c]:
-                if g["end"] >= int(m["start"]) and g["start"] <= int(m["end"]):
-                    mapped_genes.add(g["id"])
-        for g in genes[c]:
-            if g["end"] < rlo or g["start"] > rhi:
-                continue
-            grp = N.name_group(g["description"] + " " + g["name"])
-            fam = N.is_family(grp)
-            col = colour(grp) if fam else ("#3A3238" if g["name"].upper() in bnames else "#8E878C")
-            outl = "#1E1A1D" if g["id"] in mapped_genes else None
-            draw_gene(svg, g, XA, ya, False, col, outline=outl, label=False, xlim=(X0, X1))
-            xm = (max(XA(g["start"]), X0) + min(XA(g["end"]), X1)) / 2
-            lab = g["name"] if not fam else f"{g['name']} ({N.short_label(g['description']) or grp})"
-            if "uncharacterized" in g["description"].lower():
-                lab += " (uncharacterized)"
-            w = text_w(lab, 9.5)
-            for k in range(len(rows_end)):
-                if xm - w / 2 > rows_end[k] + 4:
-                    rows_end[k] = xm + w / 2
-                    ly = ya - 16 - 13 * k
-                    svg.line(xm, ya - 9, xm, ly + 3, stroke="#CCC", sw=0.6)
-                    svg.text(xm, ly, lab, size=9.5, anchor="middle", fill=col if fam else "#444",
-                             weight="bold" if (fam or g["id"] in mapped_genes) else "normal")
-                    break
-        # peptide markers below the axis, one per panel (group) and locus; markers that would
-        # overprint (several exendins on one gene) are set side by side
+        # peptide markers below the last track, one per panel (group) and locus; markers that
+        # would overprint (several exendins on one gene) are set side by side
         mk = []
         for g in groups:
             gm = [m for m in ms if m["group"] == g]
@@ -348,6 +537,10 @@ def main():
                 svg.text(xm, ya + 38, letters[g], size=13, anchor="middle", weight="bold", fill=col)
                 markers.setdefault(g, []).append((xm, ya + 42))
         y = ya + 90
+    if elsewhere:
+        svg.text(X0, y - 4, "Mapped outside this region: " + "; ".join(
+            f"{m['label']} {m['contig']}:{fmt(m['start'])}" for m in elsewhere), size=10.5, fill="#C0392B")
+        y += 12
     A_bottom = y
 
     # ================= pop-outs =================
@@ -372,13 +565,15 @@ def main():
         for w in windows(ms):
             strand = w["ms"][0]["strand"]
             flip = strand == "-"
-            ov = [gg for gg in genes.get(w["contig"], []) if gg["end"] >= w["lo"] and gg["start"] <= w["hi"]]
             lo, hi = w["lo"] - a.locus_pad_bp, w["hi"] + a.locus_pad_bp
-            for gg in ov:                               # show overlapping genes whole if not huge
-                if gg["end"] - gg["start"] <= 40000:
-                    lo, hi = min(lo, gg["start"] - 200), max(hi, gg["end"] + 200)
+            for _, src in tracks:                       # show overlapping genes whole if not huge
+                for gg in src.get(w["contig"], []):
+                    if gg["end"] >= w["lo"] and gg["start"] <= w["hi"] and gg["end"] - gg["start"] <= 40000:
+                        lo, hi = min(lo, gg["start"] - 200), max(hi, gg["end"] + 200)
+            for k_ in curated_over(w["contig"], w["lo"], w["hi"]):
+                if k_["end"] - k_["start"] <= 40000:
+                    lo, hi = min(lo, k_["start"] - 200), max(hi, k_["end"] + 200)
             lo = max(1, lo)
-            near = [gg for gg in genes.get(w["contig"], []) if gg["end"] >= lo and gg["start"] <= hi]
             LX0, LX1 = px + 92, px + pw - 16
 
             def X(p, lo=lo, hi=hi, flip=flip, LX0=LX0, LX1=LX1):
@@ -395,17 +590,34 @@ def main():
             sb = 10 ** int(len(str(max(1, int(span / 4)))) - 1)
             sb = sb * 5 if span / (sb * 5) >= 2.5 else sb
             yy += 22
-            # gene models, one row each
-            s.text(px + 12, yy + 4, "NCBI genes", size=10, fill="#555")
-            for gg in near:
-                grp = N.name_group(gg["description"] + " " + gg["name"])
-                gcol = colour(grp) if N.is_family(grp) else "#8E878C"
-                draw_gene(s, gg, X, yy, flip, gcol, label=True, label_y=yy + 20, max_label=int((LX1 - LX0) / 8),
-                          xlim=(LX0, LX1))
+            # gene models, one row each, per track
+            for tlab, src in tracks:
+                near = [gg for gg in src.get(w["contig"], []) if gg["end"] >= lo and gg["start"] <= hi]
+                s.text(px + 12, yy + 4, tlab, size=10, fill="#555")
+                for gg in near:
+                    grp = N.name_group(gg["description"] + " " + gg["name"])
+                    gcol = colour(grp) if N.is_family(grp) else "#8E878C"
+                    draw_gene(s, gg, X, yy, flip, gcol, label=True, label_y=yy + 20,
+                              max_label=int((LX1 - LX0) / 8), xlim=(LX0, LX1))
+                    yy += 34
+                if not near:
+                    s.text(LX0, yy + 4, "no gene annotated here", size=10, fill="#999", italic=True)
+                    yy += 22
+            # curated reciprocal-BLAST loci
+            if curated:
+                kk = [k_ for k_ in curated.get(w["contig"], []) if k_["end"] >= lo and k_["start"] <= hi]
+                s.text(px + 12, yy + 4, "Recip. BLAST", size=10, fill="#555")
+                clip_open(s, LX0, LX1, yy - 10, yy + 26)
+                for k_ in kk:
+                    a0_, a1_ = sorted([X(k_["start"]), X(k_["end"])])
+                    kc = colour(k_["group"])
+                    s.rect(a0_, yy - 6, max(a1_ - a0_, 3), 12, kc, rx=2)
+                    s.text((max(a0_, LX0) + min(a1_, LX1)) / 2, yy + 20, k_["name"], size=10, anchor="middle",
+                           weight="bold", fill=kc if kc not in ("#A0A0A0", "#C8C8C8") else "#555")
+                clip_close(s)
+                if not kk:
+                    s.text(LX0, yy + 4, "no curated locus here", size=10, fill="#999", italic=True)
                 yy += 34
-            if not near:
-                s.text(LX0, yy + 4, "no NCBI gene annotated here", size=10, fill="#999", italic=True)
-                yy += 22
             # peptide rows: residues coloured as runs (same / differs)
             for m in w["ms"]:
                 pid = m["peptide"]
@@ -539,7 +751,14 @@ def main():
                      + (f", intron{'s' if len(intr) > 1 else ''} " + ", ".join(f"{int(x):,} bp" for x in intr)
                         if intr else ""),
                      f"   before: …{m['before']}   after: {m['after']}…",
-                     f"   gene: {m['genes']}",
+                     *[f"   {tlab[:-6] if tlab.endswith(' genes') else tlab} gene: "
+                       + ("; ".join(f"{G.gene_label(g_)}: {w_}" for g_, w_ in
+                                    G.overlaps(src.get(m["contig"], []), int(m["start"]), int(m["end"])))
+                          or "none") for tlab, src in tracks],
+                     *([f"   reciprocal BLAST locus: "
+                        + ("; ".join(f"{k_['name']} (step 4: {k_['old']}, {k_['step4']})"
+                                     for k_ in curated_over(m["contig"], int(m["start"]), int(m["end"])))
+                           or "none")] if curated else []),
                      f"   runner-up locus: {m['runner_up']}"]
             for f in facts:
                 lim = int((pw - 24) / (0.52 * 10))
@@ -574,7 +793,11 @@ def main():
     svg.el = svg.el[:1] + wedges.el + svg.el[1:] + body.el
     H = int(max(panel_bottoms) + 30)
     svg.text(M, H - 10, "Mapping: 6a_map_published.py (genome-wide tblastn, then a sensitive tblastn in a window "
-             "around the best loci; one codon per peptide residue). Genes: NCBI RefSeq GFF.", size=9.5, fill="#777")
+             "around the best loci; one codon per peptide residue). Genes: "
+             + ", ".join(("TOGA2 reference annotation (EviAnn)" if t_.startswith("TOGA2") else "NCBI RefSeq GFF")
+                         for t_, _ in tracks)
+             + (". Reciprocal BLAST: step 4 curated loci" + (", step 5 names" if a.names else "") if curated else "")
+             + ".", size=9.5, fill="#777")
     out_svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">\n'
                f'<rect width="{W}" height="{H}" fill="white"/>\n' + "\n".join(svg.el) + "\n</svg>\n")
     open(a.out + ".svg", "w").write(out_svg)

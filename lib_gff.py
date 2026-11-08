@@ -7,6 +7,12 @@ Minimal GFF3 reader for step 6. Not run on its own.
                                     gene/pseudogene -> mRNA/transcript -> exon/CDS)
   gene_label(g)                     'LOC146345366 (uncharacterized protein ...)' style label
   overlaps(genes, lo, hi)           genes (and the exon/CDS numbers) that overlap lo-hi
+  find_genes(gff, specs)            genes named by specs ('SLC4A8', 'AQP5=LOC_00012326'),
+                                    anywhere in the file: {name: (contig, start, end, strand, id)}
+  sequence_regions(gff)             {contig: length} from ##sequence-region lines
+
+Works on NCBI RefSeq GFF3 and on the EviAnn GFF3 TOGA2 projects from (gene names there
+are in Note= or Name=; IDs like LOC_00012325).
 """
 import gzip
 from urllib.parse import unquote
@@ -46,11 +52,12 @@ def load_region(gff, contig, lo, hi):
             if f[2] in GENE_TYPES:
                 genes[a.get("ID", f"g{len(genes)}")] = dict(
                     id=a.get("ID", ""), name=a.get("Name") or a.get("gene") or a.get("ID", "?"),
-                    description=a.get("description", ""), biotype=a.get("gene_biotype", f[2]),
+                    description=a.get("description") or a.get("Note") or a.get("product", ""),
+                    biotype=a.get("gene_biotype", f[2]),
                     start=s, end=e, strand=f[6], tx=[])
             elif f[2] in TX_TYPES:
                 tx[a.get("ID", f"t{len(tx)}")] = dict(id=a.get("ID", ""), parent=a.get("Parent", ""),
-                                                     product=a.get("product", ""), start=s, end=e,
+                                                     product=a.get("product") or a.get("Note", ""), start=s, end=e,
                                                      exons=[], cds=[])
             elif f[2] in ("exon", "CDS"):
                 parts.append((f[2], a.get("Parent", ""), s, e, a.get("product", "")))
@@ -108,4 +115,69 @@ def overlaps(genes, lo, hi):
         else:
             where = "intron"
         out.append((g, where))
+    return out
+
+
+def _names(a):
+    """Every name a GFF record goes by (upper case)."""
+    out = set()
+    for k in ("ID", "Name", "gene", "gene_name", "Note", "description"):
+        v = a.get(k, "")
+        if not v:
+            continue
+        out.add(v.upper())
+        if k in ("ID", "Name"):
+            out.add(v.split(":")[-1].upper())        # 'gene:LOC_00012326'
+        if k in ("Note", "description"):             # 'similar to SLC4A8: ...'
+            out.update(w.strip(",;:()").upper() for w in v.replace("=", " ").split())
+    return out
+
+
+def find_genes(gff, specs):
+    """specs: ['SLC4A8', 'AQP5=LOC_00012326'] -> {spec_name: (contig, start, end, strand, id)}.
+    'NAME=ID' looks the gene up by ID; a bare NAME by Name/gene/ID, then by a word of Note.
+    A name matching several genes keeps the first exact Name/gene match."""
+    want = []
+    for sp in specs:
+        n, _, gid = sp.partition("=")
+        want.append((n.strip(), gid.strip()))
+    found, weak = {}, {}
+    op = gzip.open(gff, "rt") if gff.endswith(".gz") else open(gff)
+    with op as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split("\t")
+            if len(f) < 9 or f[2] not in GENE_TYPES:
+                continue
+            a = _attrs(f[8])
+            rec = (f[0], int(f[3]), int(f[4]), f[6], a.get("ID", ""))
+            ids = {a.get("ID", "").upper(), a.get("ID", "").split(":")[-1].upper()}
+            strong = {a.get(k, "").upper() for k in ("Name", "gene", "gene_name")} | ids
+            names = _names(a)
+            for n, gid in want:
+                if gid:
+                    if gid.upper() in ids:
+                        found[n] = rec
+                elif n.upper() in strong and n not in found:
+                    found[n] = rec
+                elif n.upper() in names and n not in weak:
+                    weak[n] = rec
+    for n, _ in want:
+        if n not in found and n in weak:
+            found[n] = weak[n]
+    return found
+
+
+def sequence_regions(gff):
+    out = {}
+    op = gzip.open(gff, "rt") if gff.endswith(".gz") else open(gff)
+    with op as fh:
+        for line in fh:
+            if line.startswith("##sequence-region"):
+                f = line.split()
+                if len(f) >= 4:
+                    out[f[1]] = int(f[3])
+            elif not line.startswith("#"):
+                break
     return out
