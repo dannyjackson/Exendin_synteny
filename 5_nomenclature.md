@@ -89,7 +89,10 @@ Branch lengths and supports are untouched; nothing is rebuilt.
 ```
 python3 ${SCRIPTDIR}/5c_rename_tips.py --map names_map.tsv --outdir renamed \
     ${R4}/tree/exendin_aa.rooted.nwk ${R4}/tree/exendin_aa.aln.fa ${R4}/tree/tree_aa.fa
+
 # codon tree, if built:  ... --outdir renamed ${R4}/tree/exendin_codon.rooted.nwk
+python3 ${SCRIPTDIR}/5c_rename_tips.py --map names_map.tsv --outdir renamed \
+    ${R4}/tree/exendin_codon.rooted.nwk ${R4}/tree/exendin_aa.aln.fa ${R4}/tree/tree_aa.fa
 ```
 The log lists any tip not in the map; there should be none.
 

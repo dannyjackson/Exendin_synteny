@@ -69,7 +69,25 @@ python3 ${SCRIPTDIR}/6b_plot_published_map.py --map-dir map --out published_map 
     --toga2-gff ${HELSUS_EVIANN_GFF} --boundaries SLC4A8,AQP5=LOC_00012326 \
     --curated ${WORK}/reciprocal_blast/reciprocal/curated_loci.tsv \
     --names ${WORK}/nomenclature/names_names.tsv 2> published_map.log
+
 cat published_map.log
+
+
+####### repeat with HelCha
+
+HELSUS_EVIANN_GFF=${PROJDIR}/datasets/genomes/Heloderma_suspectum/Heloderma_suspectum.final.reference.gff3
+mkdir -p ${WORK}/published_map_helcha && cd ${WORK}/published_map_helcha
+
+python3 ${SCRIPTDIR}/6a_map_published.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
+    --code HelCha --peptides ${SCRIPTDIR}/6_published_peptides_helcha.fa --threads 8 --outdir map
+
+python3 ${SCRIPTDIR}/6b_plot_published_map.py --map-dir map --out published_map_helcha \
+    --toga2-run ${TOGADIR}/target_HelSus --toga2-query HelCha \
+    --toga2-gff ${HELSUS_EVIANN_GFF} --boundaries SLC4A8,AQP5=LOC_00012326 \
+    --curated ${WORK}/reciprocal_blast/reciprocal/curated_loci.tsv \
+    --names ${WORK}/nomenclature/names_names.tsv 2> published_map_helcha.log
+
+cat published_map_helcha.log
 
 ```
 The genome-wide search reuses step 4's BLAST database (`${GENOMEDIR}/blastdb/HelSus_<accession>`)
