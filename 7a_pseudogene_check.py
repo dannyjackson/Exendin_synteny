@@ -183,17 +183,21 @@ def splice_pair(O, L, o1, o0, qg, k_max):
     """Donor/acceptor joining an exon block ending at oriented o1 to one starting at o0,
     with qg precursor residues unaligned between them. The intron must keep the frame:
     the coding bases left between the blocks (donor side + acceptor side) = 3 x (qg + k),
-    k = -k_max..k_max codons (a diverged stretch may be a few codons longer or shorter).
+    k = -k_max..k_max codons (at least qg/2: a long diverged stretch may differ more), and
+    those bases must contain no stop codon (the reading frame stays open across the
+    junction).
     -> (score, first intron base, last intron base, donor, acceptor, k) or None."""
     best = None
     q = max(qg, 0)
+    k_max = max(k_max, q // 2)                          # a long diverged stretch may differ more
     for k in range(-k_max, k_max + 1):
         tot = 3 * (qg + k)
         if tot < -36:
             continue
-        for do in range(-18, 3 * min(q + max(k, 0), 10) + 19):
+        reach = 3 * (q + max(k, 0)) + 18
+        for do in range(-18, reach + 1):
             ao = tot - do
-            if ao < -18 or ao > 3 * min(q + max(k, 0), 10) + 18:
+            if ao < -18 or ao > reach:
                 continue
             d = o1 + 1 + do
             ac = o0 - 1 - ao
@@ -202,6 +206,9 @@ def splice_pair(O, L, o1, o0, qg, k_max):
             dn, an = O[d:d + 2], O[ac - 1:ac + 1]
             if an != "AG" or dn not in ("GT", "GC"):
                 continue
+            # the coding bases the junction adds (donor side + acceptor side) must be open
+            if do >= 0 and ao >= 0 and "*" in translate(O[o1 + 1:d] + O[ac + 1:o0]):
+                continue
             sc = (dn != "GT") * 100 + 3 * abs(k) + (abs(do) + abs(ao)) / 10
             if best is None or sc < best[0]:
                 best = (sc, d, ac, dn, an, k)
@@ -209,7 +216,8 @@ def splice_pair(O, L, o1, o0, qg, k_max):
 
 
 def dp_chain(cands, anchor, strand, O, L, ori, a):
-    """Chain of HSP blocks through the anchor, scored as  sum(bits) - junction penalties:
+    """Chain of HSP blocks through the anchor, scored as  sum(bits for the precursor
+    residues each block ADDS; overlapping residues count once) - junction penalties:
       inside an exon (gap < --min-intron-bp): 0 for no indel, 2 for an in-frame indel,
         --frameshift-pen for a frameshift;
       intron: --intron-pen + 1 bit per kb of intron + 3 per codon of length difference,
@@ -239,18 +247,27 @@ def dp_chain(cands, anchor, strand, O, L, ori, a):
                                                    (3 + sp[0] - 100 if sp else a.nosplice_pen))
         cache[(i, j)] = out
         return out
+    def gain(blk, new_lo, new_hi):                      # bits for the residues blk adds
+        n_ = max(0, min(blk["qe"], new_hi) - max(blk["qs"], new_lo) + 1)
+        return blk["bits"] * n_ / (blk["qe"] - blk["qs"] + 1)
     F, Fp = [h["bits"] for h in hs], [None] * n
     for j in range(n):
         for i in range(j):
             p_ = pen(i, j)
-            if p_ is not None and F[i] - p_ + hs[j]["bits"] > F[j]:
-                F[j], Fp[j] = F[i] - p_ + hs[j]["bits"], i
+            if p_ is None:
+                continue
+            v = F[i] - p_ + gain(hs[j], hs[i]["qe"] + 1, hs[j]["qe"])
+            if v > F[j]:
+                F[j], Fp[j] = v, i
     B_, Bp = [h["bits"] for h in hs], [None] * n
     for i in range(n - 1, -1, -1):
         for j in range(i + 1, n):
             p_ = pen(i, j)
-            if p_ is not None and B_[j] - p_ + hs[i]["bits"] > B_[i]:
-                B_[i], Bp[i] = B_[j] - p_ + hs[i]["bits"], j
+            if p_ is None:
+                continue
+            v = B_[j] - p_ + gain(hs[i], hs[i]["qs"], hs[j]["qs"] - 1)
+            if v > B_[i]:
+                B_[i], Bp[i] = v, j
     ai = next(i for i, h in enumerate(hs) if h is anchor)
     left, i = [], ai
     while i is not None:

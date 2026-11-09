@@ -122,7 +122,9 @@ def parse(out, offset=None):
 
 # ---------------- chaining and residue mapping ----------------
 def chain(hits, strand, max_intron, anchor=None, max_exons=4, min_bits=14.0, min_aa=4, max_qoverlap=8):
-    """Best collinear chain (sum of bits) of at most max_exons HSPs: query order = genomic
+    """Best collinear chain of at most max_exons HSPs (sum of bits, each HSP credited only for
+    the query residues it adds, so a block re-covering residues already covered cannot
+    join for its full score): query order = genomic
     order along the strand, consecutive HSPs <= max_intron apart. If anchor is given the
     chain must contain it, and every other HSP needs >= min_bits and >= min_aa residues
     (so chance 3-5-residue matches in the window cannot be strung into extra 'exons')."""
@@ -139,6 +141,10 @@ def chain(hits, strand, max_intron, anchor=None, max_exons=4, min_bits=14.0, min
         return -30 <= gap <= max_intron
     n = len(hs)
     NEG = float("-inf")
+
+    def gain(blk, new_lo, new_hi):                      # bits for the query residues blk ADDS:
+        n_ = max(0, min(blk["qe"], new_hi) - max(blk["qs"], new_lo) + 1)   # overlaps count once
+        return blk["bits"] * n_ / (blk["qe"] - blk["qs"] + 1)
     # fw[i][k]: best chain of k HSPs ending at i; bw[i][k]: best chain of k HSPs starting at i
     fw = [[NEG] * (max_exons + 1) for _ in range(n)]
     fp = [[None] * (max_exons + 1) for _ in range(n)]
@@ -146,18 +152,20 @@ def chain(hits, strand, max_intron, anchor=None, max_exons=4, min_bits=14.0, min
         fw[i][1] = hs[i]["bits"]
         for j in range(i):
             if ok(hs[j], hs[i]):
+                g_ = gain(hs[i], hs[j]["qe"] + 1, hs[i]["qe"])
                 for k in range(2, max_exons + 1):
-                    if fw[j][k - 1] + hs[i]["bits"] > fw[i][k]:
-                        fw[i][k], fp[i][k] = fw[j][k - 1] + hs[i]["bits"], j
+                    if fw[j][k - 1] + g_ > fw[i][k]:
+                        fw[i][k], fp[i][k] = fw[j][k - 1] + g_, j
     bw = [[NEG] * (max_exons + 1) for _ in range(n)]
     bp = [[None] * (max_exons + 1) for _ in range(n)]
     for i in range(n - 1, -1, -1):
         bw[i][1] = hs[i]["bits"]
         for j in range(i + 1, n):
             if ok(hs[i], hs[j]):
+                g_ = gain(hs[i], hs[i]["qs"], hs[j]["qs"] - 1)
                 for k in range(2, max_exons + 1):
-                    if bw[j][k - 1] + hs[i]["bits"] > bw[i][k]:
-                        bw[i][k], bp[i][k] = bw[j][k - 1] + hs[i]["bits"], j
+                    if bw[j][k - 1] + g_ > bw[i][k]:
+                        bw[i][k], bp[i][k] = bw[j][k - 1] + g_, j
     if anchor is not None and any(h is anchor for h in hs):
         a = next(i for i, h in enumerate(hs) if h is anchor)
         best = max(((fw[a][k1] + bw[a][k2] - hs[a]["bits"], k1, k2)

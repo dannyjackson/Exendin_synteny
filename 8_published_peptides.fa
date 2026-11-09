@@ -1,0 +1,8 @@
+>exendin_1 | exendin-1 | Exendin-1 (helospectin I) | Parker et al. 1984 J Biol Chem 259:11751, from H. suspectum venom; Vandermeers et al. 1987: typical of H. horridum venom, traces in H. suspectum; UniProt P04203; 38 aa (helospectin II = the same without Ser38)
+HSDATFTAEYSKLLAKLALQKYLESILGSSTSPRPPSS
+>exendin_2 | exendin-2 | Exendin-2 (helodermin) | Hoshino et al. 1984 FEBS Lett 178:233, from H. suspectum venom, Glu8,9 as corrected by Vandermeers et al. 1987 (absent from H. horridum venom); UniProt P04204; 35 aa
+HSDAIFTEEYSKLLAKLALQKYLASILGSRTSPPP
+>exendin_3 | exendin-3 | Exendin-3 | Eng et al. 1990 J Biol Chem 265:20259, from H. horridum venom; UniProt P20394; 39 aa
+HSDGTFTSDLSKQMEEEAVRLFIEWLKNGGPSSGAPPPS
+>exendin_4 | exendin-4 | Exendin-4 | Eng et al. 1992 J Biol Chem 267:7402, from H. suspectum venom; UniProt P26349; 39 aa
+HGEGTFTSDLSKQMEEEAVRLFIEWLKNGGPSSGAPPPS
