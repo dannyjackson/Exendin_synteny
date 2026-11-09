@@ -9,9 +9,11 @@ Figure for 7a: is each locus an intact copy of the helodermin (exendin-2) precur
      Between cells: exon boundaries (intron length, donor..acceptor; red if no splice
      site keeps the frame), frameshifts (purple, with the indel), and the end of the
      assembled ORF (black bar). The verdict of 7a is on the left.
+  With --tables, also:
   B  The 7a summary: verdict and reasons, exons, splice sites, start codon, identity to
      the precursor overall and per region, the KR site before the mature peptide, TOGA2.
   C  dN/dS of each --pair (Nei-Gojobori over codons placed on the same precursor residue).
+  Without it the same numbers are in summary.tsv and pairs.tsv.
 
 Usage
   python3 7b_plot_pseudogene_check.py --check-dir check --out pseudogene_check
@@ -46,6 +48,7 @@ def main():
     ap.add_argument("--check-dir", required=True, help="7a output")
     ap.add_argument("--out", required=True)
     ap.add_argument("--title", default=None)
+    ap.add_argument("--tables", action="store_true", help="add panel B (summary table) and C (dN/dS) under panel A")
     ap.add_argument("--width", type=int, default=1700)
     ap.add_argument("--png-width", type=int, default=3400)
     a = ap.parse_args()
@@ -80,8 +83,10 @@ def main():
     title = a.title or "Exendin-2-like loci against the helodermin precursor (P04204): intact gene or pseudogene?"
     svg.text(M, 32, title, size=19, weight="bold")
     y = 70
-    svg.text(M, y, "A", size=22, weight="bold")
-    svg.text(M + 26, y - 1, "Each locus, codon by codon, in precursor coordinates", size=14, weight="bold")
+    if a.tables:
+        svg.text(M, y, "A", size=22, weight="bold")
+    svg.text(M + (26 if a.tables else 0), y - 1, "Each locus, codon by codon, in precursor coordinates",
+             size=14, weight="bold")
     y += 28
     # precursor regions
     rc = {"signal": "#B8B0B6", "propeptide": "#E3D9C6", "mature": N.FIXED_COLOURS.get("exendin-2", "#D55E00")}
@@ -127,8 +132,9 @@ def main():
                 svg.text(x + cw / 2, y, g, size=fs, anchor="middle", mono=True, fill=RED, weight="bold")
             if r.get("ext") == "yes":
                 svg.line(x + 1, y + 3, x + cw - 1, y + 3, stroke="#999", sw=0.8)
-        # exon boundaries
+        # exon boundaries (labels stacked when they would overlap)
         ex = sorted(exons.get(nm, []), key=lambda e: int(e["exon"]))
+        last_end, lvl = -1e9, 0
         for e in ex[:-1]:
             qb = int(e["q_end"])
             xb = X(qb + 1)
@@ -137,7 +143,11 @@ def main():
             svg.line(xb, y - cw - 4, xb, y + 6, stroke=col, sw=1.4, dash=None if ok else "3,2")
             il = e.get("intron_after", "")
             lab = (f"{int(il):,} bp " if il.isdigit() else "") + f"{e.get('donor_after', '')}..{e.get('acceptor_after', '')}"
-            svg.text(xb, y - cw - 7, lab + ("" if ok else " ✗"), size=8.5, anchor="middle", fill=col,
+            lab += "" if ok else " ✗"
+            w_ = text_w(lab, 8.5)
+            lvl = lvl + 1 if xb - w_ / 2 < last_end + 4 else 0
+            last_end = xb + w_ / 2
+            svg.text(xb, y - cw - 7 - 11 * lvl, lab, size=8.5, anchor="middle", fill=col,
                      weight="normal" if ok else "bold")
         if not ex:
             svg.text(LX, y, "precursor not found at this locus", size=11, fill="#999", italic=True)
@@ -169,8 +179,20 @@ def main():
         if lx > W - 260:
             lx = LX; y += 16
     y += 36
-
+    if not a.tables:
+        y -= 10
     # ================= B: summary table =================
+    if a.tables:
+        y = draw_tables(svg, a, order, pairs, M, W, y)
+    H = int(y + 20)
+    out_svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">\n'
+               f'<rect width="{W}" height="{H}" fill="white"/>\n' + "\n".join(svg.el) + "\n</svg>\n")
+    open(a.out + ".svg", "w").write(out_svg)
+    N.load_engine().write_png(out_svg, a.out + ".png", a.png_width)
+    N.info(f"wrote {a.out}.svg")
+
+
+def draw_tables(svg, a, order, pairs, M, W, y):
     svg.text(M, y, "B", size=22, weight="bold")
     svg.text(M + 26, y - 1, "Verdict and evidence (7a summary.tsv)", size=14, weight="bold")
     y += 24
@@ -245,12 +267,7 @@ def main():
                        "purifying selection (a functional gene). With few differences (see syn./nonsyn. diffs) the "
                        "estimate is rough.", size=10, fill="#666", italic=True)
         y += 20
-    H = int(y + 20)
-    out_svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">\n'
-               f'<rect width="{W}" height="{H}" fill="white"/>\n' + "\n".join(svg.el) + "\n</svg>\n")
-    open(a.out + ".svg", "w").write(out_svg)
-    N.load_engine().write_png(out_svg, a.out + ".png", a.png_width)
-    N.info(f"wrote {a.out}.svg")
+    return y
 
 
 if __name__ == "__main__":

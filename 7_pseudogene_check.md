@@ -15,15 +15,26 @@ HelCha ortholog HelCha_EX1) are run alongside as controls.
 **Method** (`7a_pseudogene_check.py`)
 1. **Map the precursor.** The 84-aa helodermin precursor (UniProt P04204: signal peptide
    1–22, propeptide 23–46, mature helodermin 47–84) is searched with tblastn against each
-   locus ± 10 kb. The hits are chained into exons as in step 6: one codon per precursor
-   residue, ends extended over mismatches. Any stretch of 5 or more residues still
-   uncovered is searched again on its own, between its neighbouring blocks (step 4e's
-   gap fill), so a short diverged exon is not missed.
+   locus ± 10 kb. The hits are chained into exons through the best hit at the locus.
+   - **Splice-aware chaining.** Two blocks joined by an intron score better if a GT..AG
+     keeps the reading frame between them and if the intron is short. This matters
+     because the precursor's last exon is short and Pro-rich (…SPPPPSR): Pro–Pro scores
+     high, so the Pro-rich last exon of a neighbouring exendin copy can outscore the
+     gene's own last exon. Chaining by BLAST score alone did exactly that, calling an
+     intact gene "disrupted".
+   - **Gap fill.** Any stretch of 5 or more residues still uncovered is searched again on
+     its own, between its neighbouring blocks (step 4e's gap fill), so a short diverged
+     exon is not missed.
+   - As in step 6, there is one codon per precursor residue, with ends extended over
+     mismatches.
 2. **Read the junctions** on the gene's strand.
    - **Gap < 60 bp (inside one exon).** The genomic length minus 3 × the residues it
      should hold is an indel. Not a multiple of 3 = **frameshift**.
    - **Longer gap (intron).** A donor GT (or GC) and acceptor AG that keep the reading
-     frame are looked for near the block ends. None found = **no splice site**.
+     frame are looked for near the block ends. The diverged stretch between two blocks
+     may be up to 4 codons longer or shorter than the precursor's (reported as an
+     in-frame indel); the propeptide of the B/C copies is diverged and likely of
+     another length. None found = **no splice site**.
 3. **Assemble the CDS.** The exons are joined, the first extended back to the start
    codon and the last on to its stop (only if ≤ 6 residues are missing at that end; more
    means the exon was not found). The CDS is translated.
@@ -51,15 +62,17 @@ HelCha ortholog HelCha_EX1) are run alongside as controls.
    is added: FI/I = intact, PI = partly intact, L/UL = lost or uncertain loss, M =
    missing, PG = pseudogene. It is an independent opinion on the same question.
 
-**Figure** (`7b_plot_pseudogene_check.py`)
+**Figure** (`7b_plot_pseudogene_check.py`). By default only the per-locus alignment;
+`--tables` adds the summary table (B) and dN/dS (C), which are otherwise in
+`summary.tsv` and `pairs.tsv`.
 - **A. One row per locus, in precursor coordinates, under the precursor.**
   - **Cells.** Each cell is what the locus's codon for that residue encodes: tinted =
     identical, red letter = different, red box = stop, dot = not found.
   - **Marks.** Exon boundaries (intron length, donor..acceptor; red ✗ if no splice
     site), frameshifts (purple ▲ with the indel), and where the ORF ends.
   - **Verdict** is on the left.
-- **B.** The summary table.
-- **C.** dN/dS.
+- **B** (with `--tables`). The summary table.
+- **C** (with `--tables`). dN/dS.
 
 **Files** (all new):
 - `7a_pseudogene_check.py`
@@ -103,7 +116,9 @@ python3 ${SCRIPTDIR}/7b_plot_pseudogene_check.py --check-dir check --out pseudog
 **Reading it**
 - **Controls first.** HelSus_EX2 and HelCha_EX1 must come out **intact**. If they don't,
   the mapping is wrong for this gene structure (e.g. the ~10-residue last exon was
-  missed), not the gene. Fix that before reading the test loci.
+  missed or taken from a neighbouring copy), not the gene. Check `exons.tsv`: the
+  control's last intron should be about the length step 6 found for helodermin
+  (2,137 bp in HelSus). Fix the mapping before reading the test loci.
 - **Disruptions shared by both species** (same stop or frameshift in HelSus_B and
   HelCha_C) arose before *H. suspectum* and *H. horridum* split, and the gene has been
   dead since. Disruptions in only one species are recent.

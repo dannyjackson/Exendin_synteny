@@ -7,16 +7,21 @@ the Heloderma copies that match no published peptide (step 5) and sit next to th
 exendin-2 gene, between GCGL and EX2.
 
 Per locus
-  1. The precursor is searched (sensitive tblastn) against the locus +/- --pad-bp and the
-     hits are chained into exons (6a's chain, one codon per precursor residue, ends
-     extended over mismatches). Precursor stretches no block covers are searched again
-     on their own between the neighbouring blocks (gap fill, as 4e).
+  1. The precursor is searched (sensitive tblastn) against the locus +/- --pad-bp. The
+     hits are chained into exons through the best hit at the locus, splice-aware: two
+     blocks joined by an intron score better if a GT..AG keeps the frame between them
+     and if the intron is short, so a chance hit or the exon of a neighbouring copy (the
+     Pro-rich last exons of exendin genes all look alike) does not replace the gene's own
+     exon. Precursor stretches no block covers are searched again on their own between
+     the neighbouring blocks (gap fill, as 4e) and allowed into the chain. One codon per
+     precursor residue (6a), ends extended over mismatches.
   2. Exons are read on the gene's strand. Between two aligned blocks:
        - a gap < --min-intron-bp is inside one exon: genomic length minus 3 x the
          precursor residues it should hold is an indel; not a multiple of 3 = FRAMESHIFT;
        - a longer gap is an intron: a donor (GT, or GC) and acceptor (AG) pair is looked
-         for within +/- 18 bp of the block ends that keeps the reading frame; none =
-         NO CANONICAL SPLICE SITE.
+         for near the block ends that keeps the reading frame (allowing the stretch
+         between them to be up to --splice-indel-codons codons longer or shorter than
+         the precursor's, reported as an in-frame indel); none = NO CANONICAL SPLICE SITE.
   3. A CDS is assembled from the exons (first exon extended back to precursor residue 1,
      last exon on to its stop codon) and translated. Reported: start codon (ATG?),
      premature stops (also stops inside aligned blocks), frameshifts, CDS length mod 3,
@@ -173,6 +178,89 @@ def ng86(cds1, cds2, aln1, aln2):
     return dict(codons=used, S=S, N=Nn, Sd=Sd, Nd=Nd, pS=pS, pN=pN, dS=dS, dN=dN, w=w)
 
 
+# ---------------- splice-aware chaining ----------------
+def splice_pair(O, L, o1, o0, qg, k_max):
+    """Donor/acceptor joining an exon block ending at oriented o1 to one starting at o0,
+    with qg precursor residues unaligned between them. The intron must keep the frame:
+    the coding bases left between the blocks (donor side + acceptor side) = 3 x (qg + k),
+    k = -k_max..k_max codons (a diverged stretch may be a few codons longer or shorter).
+    -> (score, first intron base, last intron base, donor, acceptor, k) or None."""
+    best = None
+    q = max(qg, 0)
+    for k in range(-k_max, k_max + 1):
+        tot = 3 * (qg + k)
+        if tot < -36:
+            continue
+        for do in range(-18, 3 * min(q + max(k, 0), 10) + 19):
+            ao = tot - do
+            if ao < -18 or ao > 3 * min(q + max(k, 0), 10) + 18:
+                continue
+            d = o1 + 1 + do
+            ac = o0 - 1 - ao
+            if d < 0 or ac >= L or ac - d < 20:
+                continue
+            dn, an = O[d:d + 2], O[ac - 1:ac + 1]
+            if an != "AG" or dn not in ("GT", "GC"):
+                continue
+            sc = (dn != "GT") * 100 + 3 * abs(k) + (abs(do) + abs(ao)) / 10
+            if best is None or sc < best[0]:
+                best = (sc, d, ac, dn, an, k)
+    return best
+
+
+def dp_chain(cands, anchor, strand, O, L, ori, a):
+    """Chain of HSP blocks through the anchor, scored as  sum(bits) - junction penalties:
+      inside an exon (gap < --min-intron-bp): 0 for no indel, 2 for an in-frame indel,
+        --frameshift-pen for a frameshift;
+      intron: --intron-pen + 1 bit per kb of intron + 3 per codon of length difference,
+        + --nosplice-pen if no GT/GC..AG keeps the frame.
+    So the gene's own exons, joined by real introns, beat chance hits and the exons of a
+    neighbouring copy (e.g. the Pro-rich last exon of another exendin gene)."""
+    hs = sorted(cands, key=lambda h: (h["qs"], h["qe"]))
+    for h in hs:
+        h["o0"], h["o1"] = sorted([ori(h["lo"]), ori(h["hi"])])
+    n = len(hs)
+    cache = {}
+
+    def pen(i, j):
+        if (i, j) in cache:
+            return cache[(i, j)]
+        A, B = hs[i], hs[j]
+        out = None
+        if A["qs"] < B["qs"] and A["qe"] < B["qe"] and A["qe"] - B["qs"] + 1 <= 8:
+            g = B["o0"] - A["o1"] - 1
+            qg = B["qs"] - A["qe"] - 1
+            if -30 <= g < a.min_intron_bp:
+                indel = g - 3 * qg
+                out = 0.0 if indel == 0 else (2.0 if indel % 3 == 0 else a.frameshift_pen)
+            elif a.min_intron_bp <= g <= a.max_intron_bp:
+                sp = splice_pair(O, L, A["o1"], B["o0"], qg, a.splice_indel_codons)
+                out = a.intron_pen + g / 1000.0 + (sp[0] if sp and sp[0] < 100 else
+                                                   (3 + sp[0] - 100 if sp else a.nosplice_pen))
+        cache[(i, j)] = out
+        return out
+    F, Fp = [h["bits"] for h in hs], [None] * n
+    for j in range(n):
+        for i in range(j):
+            p_ = pen(i, j)
+            if p_ is not None and F[i] - p_ + hs[j]["bits"] > F[j]:
+                F[j], Fp[j] = F[i] - p_ + hs[j]["bits"], i
+    B_, Bp = [h["bits"] for h in hs], [None] * n
+    for i in range(n - 1, -1, -1):
+        for j in range(i + 1, n):
+            p_ = pen(i, j)
+            if p_ is not None and B_[j] - p_ + hs[i]["bits"] > B_[i]:
+                B_[i], Bp[i] = B_[j] - p_ + hs[i]["bits"], j
+    ai = next(i for i, h in enumerate(hs) if h is anchor)
+    left, i = [], ai
+    while i is not None:
+        left.append(hs[i]); i = Fp[i]
+    right, i = [], Bp[ai]
+    while i is not None:
+        right.append(hs[i]); i = Bp[i]
+    return left[::-1] + right
+
+
 # ---------------- per-locus analysis ----------------
 def fill_gaps(ch, prec, plus, w0, w1, contig, strand, a, tmp):
     """Precursor stretches (>= 5 residues) no block covers are searched again on their own,
@@ -240,15 +328,19 @@ def analyse(name, rec, files, prec, regions, a, tmp):
         return dict(name=name, verdict="not found", reasons="precursor not found at the locus"), [], [], [], "", ""
     anchor = max(near, key=lambda h: h["bits"])
     strand = anchor["strand"]
-    ch = M6.chain(hits, strand, a.max_intron_bp, anchor=anchor, max_exons=a.max_exons, min_bits=a.min_exon_bits)
-    ch = fill_gaps(ch, prec, plus, w0, w1, contig, strand, a, tmp)
-    rows, _, _ = M6.residue_map(ch, prec)
-    rows, _ = M6.extend_ends(rows, files["fasta"], contig, strand, clen[contig], max_ext=6)
     L = w1 - w0 + 1
     O = plus if strand == "+" else plus.translate(COMP)[::-1]
 
     def ori(p):                                         # genomic -> oriented 0-based
         return p - w0 if strand == "+" else w1 - p
+    cands = [h for h in hits if h["strand"] == strand and
+             (h is anchor or (h["bits"] >= a.min_exon_bits and h["qe"] - h["qs"] + 1 >= 4))]
+    ch = dp_chain(cands, anchor, strand, O, L, ori, a)
+    filled = [h for h in fill_gaps(ch, prec, plus, w0, w1, contig, strand, a, tmp) if h.get("fill")]
+    if filled:                                          # let the re-searched stretches compete
+        ch = dp_chain(cands + filled, anchor, strand, O, L, ori, a)
+    rows, _, _ = M6.residue_map(ch, prec)
+    rows, _ = M6.extend_ends(rows, files["fasta"], contig, strand, clen[contig], max_ext=6)
 
     def gen(o):                                         # oriented 0-based -> genomic
         return w0 + o if strand == "+" else w1 - o
@@ -285,23 +377,13 @@ def analyse(name, rec, files, prec, regions, a, tmp):
             p["q1"], p["o1"] = b["q1"], b["o1"]
             continue
         # intron: donor/acceptor that keep the frame
-        best = None
-        for do in range(-18, 3 * qg + 19):
-            ao = 3 * qg - do
-            if ao < -18 or ao > 3 * qg + 18:
-                continue
-            d = p["o1"] + 1 + do                        # first intron base
-            ac = b["o0"] - 1 - ao                       # last intron base
-            if d < 0 or ac >= L or ac - d < 20:
-                continue
-            dn, an = O[d:d + 2], O[ac - 1:ac + 1]
-            if an != "AG" or dn not in ("GT", "GC"):
-                continue
-            sc = (dn != "GT") * 100 + abs(do) + abs(ao)
-            if best is None or sc < best[0]:
-                best = (sc, d, ac, dn, an)
+        best = splice_pair(O, L, p["o1"], b["o0"], qg, a.splice_indel_codons)
         if best:
-            _, d, ac, dn, an = best
+            _, d, ac, dn, an, k = best
+            if k:
+                events.append(dict(kind="indel", qpos=p["q1"],
+                                   detail=f"in-frame {k:+d} codon(s) between precursor {p['q1']} and {b['q0']} "
+                                          "(diverged stretch of another length)"))
             introns.append(dict(after_q=p["q1"], donor=dn, acceptor=an, canonical="yes", length=ac - d + 1))
             if dn == "GC":
                 events.append(dict(kind="splice", qpos=p["q1"], detail="GC donor (non-canonical but functional in ~1% of introns)"))
@@ -484,6 +566,12 @@ def main():
     ap.add_argument("--max-exons", type=int, default=6)
     ap.add_argument("--min-exon-bits", type=float, default=16.0,
                     help="bits an aligned block other than the strongest needs [16]")
+    ap.add_argument("--frameshift-pen", type=float, default=15.0, help="chaining penalty for a frameshift [15]")
+    ap.add_argument("--intron-pen", type=float, default=4.0, help="chaining penalty per intron [4], plus 1 per kb")
+    ap.add_argument("--nosplice-pen", type=float, default=25.0,
+                    help="chaining penalty for an intron with no frame-keeping GT/GC..AG [25]")
+    ap.add_argument("--splice-indel-codons", type=int, default=4,
+                    help="a diverged stretch across an intron may be this many codons longer or shorter [4]")
     ap.add_argument("--fill-bits", type=float, default=12.0,
                     help="bits a re-searched precursor stretch needs to be accepted as an exon [12]")
     ap.add_argument("--max-end-ext", type=int, default=6,
