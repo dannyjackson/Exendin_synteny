@@ -388,7 +388,9 @@ def main():
     # ---- panel B: tree ----
     fs = a.font_pt
     rw = (width_total - a.left_mm) * P.PT_PER_MM
-    row = fs * 1.15
+    # match panel A's height: spread the tips over it (within readable limits)
+    lh0 = float(re.search(r'height="([\d.]+)pt"', left.split("\n", 1)[0]).group(1))
+    row = min(max((lh0 - fs * 2.2 - fs * 3.2) / max(1, len(tips)), fs * 1.05), fs * 1.8)
     lab_w = max(P.text_w(rename.get(t, t), fs) for t in tips) + 6
     top = fs * 2.2
     xs = {}

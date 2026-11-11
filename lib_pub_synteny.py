@@ -317,27 +317,41 @@ def draw(species, a, bnames, legend_status=(), empty_default="nothing annotated"
     x0, x1 = margin + tree_w + name_w, W - margin - 2
     line_h, row_gap = fs * 0.95, fs * 0.75
     tiers = getattr(a, "label_tiers", 3) if a.labels else 0
-    line_gap = fs * (1.25 + 1.05 * tiers)
     gene_h = fs * 0.95
-    header_h = fs * (1.6 + 1.05 * tiers)
     span = max([ln["span"] for ls in lines_by.values() for ln in ls] or [1])
     scale = (x1 - x0) / span
     min_w = 1.6
     apply_colour_mode(lines_by, getattr(a, "colour", "family"))
     famg, other, cmap = colours(lines_by, order)
 
-    y = margin + header_h
+    def line_tiers(ln):
+        """label tiers this line needs (0 = no labels), from where its labels fall."""
+        if not a.labels:
+            return 0
+        off = x0 if ln["align"] in ("left", "full") else x1 - ln["span"] * scale
+        slots = []
+        for f in sorted(ln["feats"], key=lambda f: f["x0"]):
+            if f["kind"] == "gene" and f.get("label"):
+                _, (g0, g1) = arrow(off + f["x0"] * scale, off + f["x1"] * scale, 0, gene_h, f["ostrand"], min_w)
+                slots.append(((g0 + g1) / 2, text_w(f["label"], fs)))
+        return (max(S.place_labels(slots, max_tiers=tiers)) + 1) if slots else 0
+
+    tier_h = fs * 1.05
+    y = margin + fs * 1.6                       # header (SLC4A8 / AQP5)
     rows_y, centre = [], {}
     for i, q in enumerate(order):
-        nl = max(1, len(lines_by.get(q, [])))
         if i and q not in top and order[i - 1] in top:
             y += row_gap * 1.5
-        if a.labels and i:
-            y += fs * 1.05 * tiers  # room for the label tiers above the row
-        ys = [y + line_h / 2 + k * line_gap for k in range(nl)]
+        ys = []
+        for k, ln in enumerate(lines_by.get(q, []) or [None]):
+            if k:
+                y += fs * 0.5                       # between two contigs of one genome
+            y += (line_tiers(ln) if ln else 0) * tier_h
+            ys.append(y + line_h / 2)
+            y += line_h
         rows_y.append((q, ys))
         centre[q] = sum(ys) / len(ys)
-        y = ys[-1] + line_h / 2 + row_gap
+        y += row_gap
 
     out, lay = [], []
 
