@@ -13,8 +13,9 @@ or duplicated, whether or not anyone annotated a gene there.
   syntenic blocks.
 - **Duplicates:** a tile that also lifts to a second locus is a secondary alignment, i.e.
   duplicated sequence.
-- **Figure:** each genome's blocks are coloured by their position along HelSus, and the
-  lifted HelSus genes are drawn on top. HelSus is the colour key.
+- **Figure:** a river plot (as in GENESPACE / SVbyEye). One bar per genome in tree order,
+  the lifted HelSus genes on each bar, and ribbons joining each segment's positions in
+  neighbouring genomes.
 
 Run the set-up block of `0_Environment_management.md` first.
 ```
@@ -62,52 +63,70 @@ Read the log:
 Each `halLiftover` call is quick for a region this size. The whole step takes minutes, but run it
 in `sinteractive`, not on the login node.
 
-## 3. Plot
+## 3. River plot
 ```
-python3 ${SCRIPTDIR}/9b_plot_hal_synteny.py --indir hal_lift \
+python3 ${SCRIPTDIR}/9b_plot_hal_river.py --indir hal_lift \
     --species-table ../species.tsv --species-tree ${SPTREE} \
-    --svg hal_synteny.svg --pdf hal_synteny.pdf --png hal_synteny.png \
-    --layout hal_synteny_layout.tsv 2> hal_synteny.log
-cat hal_synteny.log
+    --svg hal_river.svg --pdf hal_river.pdf --png hal_river.png \
+    --layout hal_river_layout.tsv 2> hal_river.log
+cat hal_river.log
+
+# GENESPACE-style colours: every ribbon coloured by its position along HelSus
+python3 ${SCRIPTDIR}/9b_plot_hal_river.py --indir hal_lift --ribbon-colour position \
+    --species-table ../species.tsv --species-tree ${SPTREE} \
+    --svg hal_river_position.svg --pdf hal_river_position.pdf --png hal_river_position.png 2> hal_river_position.log
+
+# with duplicated (secondary) alignments as faded ribbons
+python3 ${SCRIPTDIR}/9b_plot_hal_river.py --indir hal_lift --secondary \
+    --species-table ../species.tsv --species-tree ${SPTREE} \
+    --svg hal_river_dups.svg --pdf hal_river_dups.pdf --png hal_river_dups.png 2> hal_river_dups.log
 ```
-All genomes in the alignment are drawn, not only the TOGA2 set. The figure uses the
+Every genome in the alignment is drawn, not only the TOGA2 set. The plot uses the
 publication layout of steps 2 and 3: 180 mm wide (`--width-mm 88` for one column), 7 pt
-text, and a vector PDF.
+text, and a vector PDF. Genomes with no alignment to the interval are left out of the
+river and named in the log (`not aligned to the interval`).
 
 ## Reading it
-- **Colour band** = sequence aligned to the HelSus interval, coloured purple (SLC4A8 end)
-  → yellow (AQP5 end).
-  - Gradient running the same way as in HelSus: collinear.
-  - Gradient reversed inside a block: an inversion relative to HelSus.
-  - A colour missing from a genome: that part of the interval did not align there. It is
-    lost, too diverged to align, or in an assembly gap.
-- **Lines:** each genome is oriented to match HelSus and shifted so its blocks sit under
-  the matching part of HelSus, so a vertical line through the figure crosses homologous
-  sequence. Several lines for one genome = the interval spans several contigs (the
-  assembly is broken, or the region is rearranged). Only contigs with at least
-  `--min-frac` (5%) of the genome's aligned sequence are drawn, and the log lists the rest.
-  `//` = an unaligned stretch longer than `--max-gap-kb` (100), cut short.
-- **Faded band below** = secondary alignment: the same HelSus sequence aligns to a second
-  place on that contig. Over the exendin array this is the signature of tandem copies.
-  `--no-secondary` hides it.
-- **Arrows** = HelSus genes lifted through the alignment, not the genome's own
-  annotation.
+- **Bars** = one per genome, in species-tree order. A bar is the stretch of a contig that
+  the HelSus interval aligns to, with HelSus at its place in the tree.
+  - Several bars in one row = the interval is split over several contigs (assembly break
+    or rearrangement).
+  - Each genome is flipped to match HelSus and shifted so homologous sequence lines up
+    roughly vertically.
+  - `//` on a bar = an unaligned stretch longer than `--max-gap-kb` (100), cut short.
+  - Contigs with less than `--min-frac` (5%) of a genome's aligned sequence are not drawn,
+    and the log lists them.
+- **Genes on the bars** = the HelSus genes lifted through the alignment.
   - Colours: exendins and GCGL keep their usual colours, every other gene is grey, and
     SLC4A8/AQP5 are dark grey.
-  - Hollow = less than half of the gene aligned.
-  - Dashed = the gene's secondary lift (a second copy).
-  - Absence of an arrow means the HelSus gene does not align there. It does not mean the
-    genome has no such gene: a diverged copy can be missed. Steps 3 and 4 test that.
-- **Clipped lines:** the log warns if a line runs more than `--overhang` (30%) of the
-  interval beyond HelSus and was clipped at the figure edge.
+  - Hollow = less than half of the gene aligned. Dashed = a second copy of the gene's
+    sequence.
+  - A missing arrow means the HelSus gene does not align there, not that the genome has
+    no such gene. Steps 3 and 4 test for diverged copies.
+- **Ribbons** connect each neighbouring pair of genomes: one ribbon per run of the HelSus
+  interval that is collinear in both.
+  - Grey = same orientation. Brown, twisting = inverted between the two genomes.
+  - Exendin and GCGL ribbons are in the gene's colour, so the array can be followed down
+    the tree.
+  - Where ribbons stop, the sequence between them did not align in one of the two
+    genomes.
+  - `--ribbon-colour position` colours every ribbon by its position along HelSus (purple
+    at SLC4A8 → yellow at AQP5), as in GENESPACE. That makes long-range moves easy to
+    follow.
+- **Ribbons only join neighbours.** Sequence present in two genomes that are not
+  adjacent, but absent from the one between them, has no ribbon. Read the presence of a
+  segment from the bars of each genome, and the ribbons for order and orientation.
+- **`--secondary`** adds faded ribbons to the places where a HelSus segment aligns a second
+  time in the next genome. Over the exendin array, this fan-out is how tandem copies show.
 
 ## Outputs
 | File | Content |
 |---|---|
 | `hal_lift/region.tsv` | HelSus chromosome, region, boundary genes |
 | `hal_lift/ref_genes.tsv` | HelSus genes in the region |
+| `hal_lift/tile_hits.tsv` | where each 1 kb HelSus tile aligns in each genome (primary and secondary); the ribbons are drawn from this |
 | `hal_lift/blocks.tsv` | every syntenic block: genome, contig, target and HelSus coordinates, strand, aligned bp, primary/secondary |
 | `hal_lift/genes_lifted.tsv` | where each HelSus gene lands in each genome, and how much of it aligned |
 | `hal_lift/targets.tsv` | per genome: aligned bp, fraction of the interval, main contig |
 | `hal_lift/lifted/` | raw `halLiftover` output |
-| `hal_synteny.{svg,pdf,png}`, `hal_synteny_layout.tsv` | figure and the drawn coordinates |
+| `hal_river*.{svg,pdf,png}`, `hal_river_layout.tsv` | figures; every bar and ribbon with its HelSus coordinates |

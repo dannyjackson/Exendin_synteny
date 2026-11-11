@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Lift the HelSus SLC4A8-AQP5 interval through the Cactus alignment into every other genome,
-for the alignment-based synteny figure (9b_plot_hal_synteny.py).
+for the alignment-based river plot (9b_plot_hal_river.py).
 
 1. Region. SLC4A8 and AQP5 are found in the HelSus annotation (--gff; EviAnn names such as
    'Similar to SLC4A8: ...' are read as SLC4A8; NAME=ID adds gene IDs, e.g.
@@ -24,6 +24,7 @@ library only. Read-only on the HAL file and GFF. Writes to --outdir:
   ref_genes.tsv      HelSus genes in the region (symbol, description, family group)
   tiles.bed, genes.bed           what was lifted
   lifted/<target>.{tiles,genes}.bed   raw halLiftover output
+  tile_hits.tsv      every tile's primary and secondary hit in every target (for the river plot)
   blocks.tsv         target, contig, target start/end, strand, HelSus start/end, aligned bp,
                      primary/secondary, number of tiles
   genes_lifted.tsv   target, HelSus gene, contig, start, end, strand, fraction of the gene lifted
@@ -273,6 +274,8 @@ def main():
     with open(os.path.join(a.outdir, "blocks.tsv"), "w") as fb, \
          open(os.path.join(a.outdir, "genes_lifted.tsv"), "w") as fg, \
          open(os.path.join(a.outdir, "targets.tsv"), "w") as ft:
+        fh_t = open(os.path.join(a.outdir, "tile_hits.tsv"), "w")
+        fh_t.write("target\tcode\trstart\trend\ttype\tcontig\ttstart\ttend\tstrand\taligned_bp\n")
         fb.write("target\tcode\tcontig\ttstart\ttend\tstrand\trstart\trend\taligned_bp\ttype\tn_tiles\n")
         fg.write("target\tcode\tgene_id\tcontig\tstart\tend\tstrand\tfrac_lifted\thit\n")
         ft.write("target\tcode\taligned_bp\tfrac_region\tmain_contig\tn_blocks\n")
@@ -291,6 +294,9 @@ def main():
                 for c2, s2, e2, st2, bp2 in hs[1:]:
                     if bp2 >= a.secondary_frac * bp:
                         sec.append((rs, re_, c2, s2, e2, st2, bp2))
+            for kind, hl in (("primary", prim), ("secondary", sec)):
+                for rs, re_, c, ts, te, st, bp in sorted(hl):
+                    fh_t.write(f"{tg}\t{code}\t{rs}\t{re_}\t{kind}\t{c}\t{ts + 1}\t{te}\t{st}\t{bp}\n")
             pb, sb = chain(prim, maxgap), chain(sec, maxgap)
             for kind, bl in (("primary", pb), ("secondary", sb)):
                 for b in bl:
@@ -313,7 +319,8 @@ def main():
                         break
                     fg.write(f"{tg}\t{code}\t{gid}\t{c}\t{s + 1}\t{e}\t{st}\t{bp / glen.get(gid, 1):.3f}\t"
                              f"{'primary' if k == 0 else 'secondary'}\n")
-    N.info(f"wrote {a.outdir}/blocks.tsv, genes_lifted.tsv, targets.tsv")
+        fh_t.close()
+    N.info(f"wrote {a.outdir}/blocks.tsv, tile_hits.tsv, genes_lifted.tsv, targets.tsv")
 
 
 if __name__ == "__main__":
