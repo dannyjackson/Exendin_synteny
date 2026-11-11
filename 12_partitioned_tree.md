@@ -16,16 +16,22 @@ wildly divergent hormone domains.
 right design for the selection tests, and it turns Irwin & Prentice's rate claim into a
 hypothesis you can test with 14 genomes instead of the handful they had.
 
+Everything below is in the **step-5 nomenclature** (`<Sp>_GCGL`, `<Sp>_Exendin_anc`,
+`<Sp>_A` / `_B` / `_Z`, and the unchanged `*_GCG` / `*_GIP` outgroups), so run
+`10h_apply_names.py` (end of step 5) first — the `aln1/` files still carry the provisional
+TOGA2 labels and `--highlight HelSus_A` would not match anything in them.
 ```
 cd ${WORK}/toga2_exendin_tree
-ALN=aln1/exendin.aa.fa
+ls named/exendin.aa.fa || echo "run 10h_apply_names.py first (step 5)"
+ALN=named/exendin.aa.fa
+CODON=named/exendin.codon.fa
 IQTREE=$(command -v iqtree3 || command -v iqtree2 || command -v iqtree)
-OG=$(cat tree/outgroup.txt)
+OG=$(cat named/outgroup.txt); echo ${OG}
 ```
 
 ## 1. Split the alignment
 ```
-python3 ${SCRIPTDIR}/12a_partition_alignment.py --aln ${ALN} --codon-aln aln1/exendin.codon.fa \
+python3 ${SCRIPTDIR}/12a_partition_alignment.py --aln ${ALN} --codon-aln ${CODON} \
     --reference ${SCRIPTDIR}/4_reference_peptides.fa --outdir partitioned 2> partitioned.log
 cat partitioned.log
 cut -f1,2,4,6 partitioned/boundaries.tsv | column -t
@@ -48,11 +54,11 @@ the same rule as `5a_assign_nomenclature.py` and taken as the consensus.
 $IQTREE -s partitioned/slow.aa.fa -m MFP -B 1000 -alrt 1000 -o ${OG} -T AUTO \
     --prefix partitioned/slow -redo
 grep "Best-fit model" partitioned/slow.iqtree
-python3 ${SCRIPTDIR}/4h_draw_tree.py --tree partitioned/slow.treefile --groups tree/groups.tsv \
+python3 ${SCRIPTDIR}/4h_draw_tree.py --tree partitioned/slow.treefile --groups named/groups.tsv \
     --outgroup ${OG} --title "Signal peptide + pro-region only" --png partitioned/slow.png \
     > partitioned/slow.svg
 ```
-Compare this with `tree/exendin_aa.treefile` from step 4. The question is whether the
+Compare this with `named/exendin_aa.treefile` from step 4. The question is whether the
 exendins move from sister-to-all-GCGL to nested within squamate GCGL once the fast block is
 removed. If they do, step 4's topology was an artifact and this is the tree to report.
 
@@ -95,9 +101,10 @@ python3 ${SCRIPTDIR}/12b_branch_rates.py \
     --out-prefix partitioned/rates 2> partitioned/rates.log
 cat partitioned/rates.log
 ```
-`--highlight` takes tip names; the test set is their terminal branches plus any internal
-branch lying wholly inside them. Set it to whichever copies your step-5 naming calls the
-venom genes.
+`--highlight` takes tip names in the step-5 nomenclature; the test set is their terminal
+branches plus any internal branch lying wholly inside them. Set it to whichever copies your
+naming calls the venom genes — `cut -f2,4 names/names.tsv | grep copy` lists the candidates,
+and `names/names.tsv` records which letter each published exendin ended up as.
 
 Output: a per-branch table (slow length, fast length, ratio, log2 shift against the tree
 median), a permutation test of the highlighted branches against the rest, and a tree with
@@ -116,7 +123,7 @@ confirms Irwin & Prentice with more taxa. Three other outcomes are worth as much
 ## 5. One rate per partition, and selection
 A partitioned run gives the overall rate ratio in a single number:
 ```
-$IQTREE -s aln1/exendin.codon.fa -p partitioned/partitions.nex -m MFP -B 1000 \
+$IQTREE -s ${CODON} -p partitioned/partitions.nex -m MFP -B 1000 \
     -T AUTO --prefix partitioned/both -redo
 grep -A6 "Partition information" partitioned/both.iqtree       # relative rate per partition
 ```

@@ -378,11 +378,21 @@ from the tree drawing (the tree is not re-inferred), and the other genes keep th
 and supports. To remove it from the analysis itself, drop its tips in `curation.tsv` and
 re-run steps 3–5.
 
-To carry the names into the alignment as well:
+### Put the names on everything else
+10f renames the tree it draws, but the alignments and the step-4 helper files still carry
+the provisional TOGA2 labels. Rewrite them once, here, so steps 6 and 12 speak one
+nomenclature:
 ```
-cut -f1,2 names/names.tsv | tail -n +2 > names/map.tsv
-seqkit replace -p '^(\S+)' -r '{kv}' -k names/map.tsv aln1/exendin.aa.fa > aln1/exendin.aa.named.fa
+python3 ${SCRIPTDIR}/10h_apply_names.py --names names/names.tsv \
+    --fasta aln1/exendin.aa.fa --fasta aln1/exendin.codon.fa \
+    --tree tree/exendin_aa.treefile --outdir named
+grep '>' named/exendin.aa.fa | head
+cat named/outgroup.txt
 ```
+This writes `named/` holding the renamed alignments and tree, plus `groups.tsv` (tip ->
+GCGL / Exendin_anc / copy / GCG / GIP, for `4h_draw_tree.py --groups`), `outgroup.txt` (the
+GIP tips, for IQ-TREE `-o`) and `map.tsv`. Any tip without a row in `names.tsv` keeps its
+name and is reported, so nothing disappears silently. **Use the `named/` files from here on.**
 
 ## 6. Genome annotations for each locus (to pair with expression data)
 For every exendin-family locus of one genome (GCGL, Exendin_anc, lettered copies): which
@@ -437,4 +447,6 @@ Use `--species HelCha` (or any other code with an annotation) for another genome
 | `tree/exendin_codon.*` | optional codon tree of the exendins and GCGL |
 | `names/names.tsv`, `names/renamed.treefile` | every new name with its rule; the tree under the new names |
 | `exendin_figure.{svg,pdf,png}` | the figure: named interval synteny (A), gene tree (B), exendin alignment (C) |
+| `named/exendin.{aa,codon}.fa`, `named/exendin_aa.treefile` | the alignments and tree under the step-5 names |
+| `named/groups.tsv`, `named/outgroup.txt`, `named/map.tsv` | colour groups, the GIP root and the old-to-new map, all in the new nomenclature |
 | `names/<Sp>_annotations.tsv` | per locus: the genome annotations' gene and transcript IDs overlapping it (EviAnn, NCBI), for expression data |
