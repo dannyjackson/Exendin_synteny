@@ -96,12 +96,57 @@ Expect 3 exons on the minus strand covering the cDNA end to end, exon 1 near
 4,399,218–4,399,326, and an 87-aa protein identical to the published exendin-3 precursor
 (P20394): `MKIILWLCVFGLFLATLFPVSWQMPVESGLSSEDSASSESFASKIKRHSDGTFTSDLSKQMEEEAVRLFIEWLKNGGPSSGAPPPSG`.
 
+## 1c. Outgroups: GCG, GIP and chicken GCGL
+The family's other ligands root the tree and show where the exendin copies attach:
+proglucagon (GCG) and GIP from chicken, human and HelSus, and chicken GCGL, the ortholog
+used to define GCGL (Wang et al. 2012).
+- **Chicken and HelSus GCG/GIP** come from their NCBI annotations, already downloaded in step 1
+  (GalGal `GCF_016699485.2`, HelSus `GCF_057233095.1`). The gene is found by symbol, then by
+  description. Its MANE-tagged transcript is used if there is one, else the longest CDS.
+- **Human GCG/GIP** come from their RefSeq mRNAs (`NM_002054`, `NM_004123`), and **chicken
+  GCGL** from EU718628, fetched as CDS records.
+```
+mkdir -p outgroups
+command -v efetch || module load edirect
+efetch -db nuccore -id NM_002054,NM_004123 -format fasta_cds_na > outgroups/human_cds.fa
+efetch -db nuccore -id EU718628 -format fasta_cds_na > outgroups/EU718628_cds.fa
+grep '>' outgroups/*.fa
+
+python3 ${SCRIPTDIR}/10d_outgroup_cds.py --species-table ../species.tsv --genomedir ${GENOMEDIR} \
+    --gene GalGal:GCG,GIP --gene HelSus:GCG,GIP \
+    --cds-fasta HomSap=outgroups/human_cds.fa --cds-fasta GalGal=outgroups/EU718628_cds.fa:GCGL \
+    --out outgroups/outgroups_cds.fa 2> outgroups/outgroups.log
+cat outgroups/outgroups.log
+cut -f1-7 outgroups/outgroups_cds.fa.tsv | column -t
+```
+Expect 7 tips: `GalGal_GCG`, `GalGal_GIP`, `HelSus_GCG`, `HelSus_GIP`, `HomSap_GCG`, `HomSap_GIP`,
+`GalGal_GCGL`, each `ok` in the checks column.
+- **`no gene X`**: that annotation names the gene differently. Find it with
+  `grep -i "glucagon\|inhibitory polypeptide" <genomic.gff> | awk -F'\t' '$3=="gene"'`, then pass
+  its symbol (`--gene HelSus:LOC...`), or a description regex (`--describe GIP='...'`).
+- **`N genes match`**: check that the one used is right (e.g. `GCG` and not a `GCG`-like LOC).
+- **`no ATG start` / `no final stop`**: a partial record. EU718628 should be the complete
+  chicken GCGL CDS: check it says `ok`.
+- **Proteins:** `HomSap_GCG` should be the 180-aa human proglucagon and `HelSus_GCG` should
+  match the HelSus proglucagon `GCG_precursor` in `4_reference_peptides.fa` (O12956).
+
+**Trim the outgroups to the part that matches an exendin precursor.** Proglucagon carries
+three hormone domains (glucagon, GLP-1, GLP-2), and GIP has a long C-terminal peptide.
+Aligned whole, they open long gap blocks that hold no information about the exendins.
+Keep signal peptide, propeptide, the first hormone domain and its cleavage site.
+- **Human proglucagon:** signal 1–20, GRPP 21–50, glucagon 53–81, IP-1 to ~89. Keep `1-89`.
+- **Human GIP precursor:** signal 1–21, propeptide 22–51, GIP 52–93, then the C-terminal
+  peptide. Keep `1-95`.
+- **Chicken and HelSus:** check where the same domains end in the viewer of step 2.
+Add the `trim` rows in step 3, e.g. `HomSap_GCG	trim	1-89	signal, GRPP, glucagon, IP-1; GLP-1 and GLP-2 removed`.
+
 ## 2. First alignment
 Codon-aware alignment with MACSE, as in step 4. Frameshifts and internal stops become `NNN`/`X`
 instead of breaking the frame.
 ```
 mkdir -p aln0
-macse -prog alignSequences -seq collect/exendin_cds.fa -out_NT aln0/exendin.macse_NT.fa -out_AA aln0/exendin.macse_AA.fa
+cat collect/exendin_cds.fa rescued/HelCha_Ex3.cds.fa outgroups/outgroups_cds.fa > aln0/input_cds.fa
+macse -prog alignSequences -seq aln0/input_cds.fa -out_NT aln0/exendin.macse_NT.fa -out_AA aln0/exendin.macse_AA.fa
 macse -prog exportAlignment -align aln0/exendin.macse_NT.fa -codonForFinalStop --- -codonForInternalStop NNN -codonForExternalFS --- -codonForInternalFS NNN -out_NT aln0/exendin.codon.fa -out_AA aln0/exendin.aa.fa
 ```
 For viewing only, add the published precursors (exendin-2, -3, -4) as guide rows. `--keeplength`
@@ -123,8 +168,13 @@ Open `aln0/exendin.aa.pdf`.
   re-run with e.g. `--region 48-86`.
 
 ## 3. Curate
-Edit `collect/curation.tsv` (copy it first: `cp collect/curation.tsv curation.tsv`). It has one
-row per tip, all `keep`, with automatic notes. Change `action` and give the reason in `note`:
+Copy the template that 10a wrote, then edit the copy. Re-running 10a overwrites
+`collect/curation.tsv`, so never edit the template itself:
+```
+cp collect/curation.tsv curation.tsv
+```
+It has one row per tip, all `keep`, with automatic notes. Change `action` and give the
+reason in `note`:
 
 | action | value | use for |
 |---|---|---|
@@ -149,8 +199,10 @@ Then apply the table and realign:
 ```
 mkdir -p curated aln1
 python3 ${SCRIPTDIR}/10b_apply_curation.py --cds collect/exendin_cds.fa --curation curation.tsv \
-    --add-cds rescued/HelCha_Ex3.cds.fa --out-prefix curated/exendin 2> curated.log
-cat curated.log
+    --add-cds rescued/HelCha_Ex3.cds.fa --add-cds outgroups/outgroups_cds.fa \
+    --out-prefix curated/exendin 2> curated.log
+cat curated.log                        # must list your drops / renames / trims, and HelCha_Ex3 + 7 outgroups 'added'
+grep -c '>' curated/exendin_cds.fa     # stop here if this fails: nothing below can run
 macse -prog alignSequences -seq curated/exendin_cds.fa -out_NT aln1/exendin.macse_NT.fa -out_AA aln1/exendin.macse_AA.fa
 macse -prog exportAlignment -align aln1/exendin.macse_NT.fa -codonForFinalStop --- -codonForInternalStop NNN -codonForExternalFS --- -codonForInternalFS NNN -out_NT aln1/exendin.codon.fa -out_AA aln1/exendin.aa.fa
 mafft --add published_precursors.faa --keeplength aln1/exendin.aa.fa > aln1/exendin.aa.with_published.fa
