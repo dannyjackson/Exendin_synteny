@@ -329,11 +329,11 @@ def main():
         N.info(f"{q}: {len(genes)} genes ({how}); {sum(f['family'] for f in feats)} family")
         for f in rest + list(bnd.values()):
             rows.append([q, f["query_gene"], f["symbol"], f["group"], f["contig"], f["start"], f["end"], f["strand"],
-                         f["status"], "boundary" if f["query_gene"] in bq else "", f["ref_genes"]])
+                         f["status"], "boundary" if f["query_gene"] in bq else "", f["ref_genes"], f["description"]])
 
     if a.genes_out:
         with open(a.genes_out, "w") as fh:
-            fh.write("species\tquery_gene\tsymbol\tgroup\tcontig\tstart\tend\tstrand\tstatus\tboundary\tref_genes\n")
+            fh.write("species\tquery_gene\tsymbol\tgroup\tcontig\tstart\tend\tstrand\tstatus\tboundary\tref_genes\tdescription\n")
             for r in sorted(rows, key=lambda r: (r[0], r[4], r[5])):
                 fh.write("\t".join(map(str, r)) + "\n")
     P.draw(species, a, bnames,
