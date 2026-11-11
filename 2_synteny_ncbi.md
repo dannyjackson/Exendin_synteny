@@ -14,7 +14,7 @@ are fixed per name across all figures.
 
 Run the set-up block of `0_Environment_management.md` first.
 ```
-cd ${WORK}
+cd ${SCRIPTDIR} && git pull && cd ${WORK}
 ```
 
 ## 1. Restrict the species table to the TOGA2 genomes
