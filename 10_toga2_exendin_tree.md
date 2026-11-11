@@ -327,6 +327,7 @@ python3 ${SCRIPTDIR}/10f_name_genes_figure.py --tree tree/exendin_aa.treefile --
     --candidates collect/candidates.tsv --curation-log curated/exendin_log.tsv \
     --rescued HelCha_Ex3=rescued/HelCha_Ex3.exons.tsv --genes ${GENES} \
     --species-table ../species_toga2.tsv --species-tree ${SPTREE} \
+    --aln ${ALN} --aln-region "48-86:hormone domain" --drop-species BarImb \
     --outdir names --svg exendin_figure.svg --pdf exendin_figure.pdf --png exendin_figure.png 2> names.log
 cat names.log
 column -t -s$'\t' names/names.tsv
@@ -358,6 +359,24 @@ written as a vector PDF.
     are sparse.
 - **Panel B:** the GIP-rooted tree with the same names and colours.
   - Filled dot = UFBoot ≥ 95 and SH-aLRT ≥ 80. Open dot = UFBoot ≥ 70.
+- **Panel C** (`--aln`): the protein alignment the tree was built from, filtered to the
+  exendin genes only (Exendin_anc and the lettered copies). GCGL, GCG and GIP rows are
+  left out, and so are the columns that are gaps in every exendin.
+  - Rows follow panel B's order, with the same names and colours. Residues are coloured
+    by class, with `X` in red.
+  - It runs the full width under A and B, always on one line: if the alignment does not fit
+    at 7 pt, its text shrinks until it does. The log gives the size used (`text 6.4 pt`) and
+    warns below 5 pt. `--aln-font-pt` sets the size directly.
+  - `--aln-region START-END:LABEL` draws a labelled box over those columns. The numbering
+    is **panel C's own**, after the gap columns are removed, so read the column numbers
+    off a first draw and then set it (e.g. the mature peptide, `--aln-region "48-86:hormone
+    domain"`). It can be given more than once, e.g. for the signal peptide.
+
+**Leaving a genome out of the figure.** `--drop-species BarImb` removes *Barisia imbricata*
+from all three panels: its row in A, its tips in B and its rows in C. Its tips are pruned
+from the tree drawing (the tree is not re-inferred), and the other genes keep their names
+and supports. To remove it from the analysis itself, drop its tips in `curation.tsv` and
+re-run steps 3–5.
 
 To carry the names into the alignment as well:
 ```
@@ -380,4 +399,4 @@ seqkit replace -p '^(\S+)' -r '{kv}' -k names/map.tsv aln1/exendin.aa.fa > aln1/
 | `tree/AUtest.iqtree` | AU test of the ML tree against H1–H3 |
 | `tree/exendin_codon.*` | optional codon tree of the exendins and GCGL |
 | `names/names.tsv`, `names/renamed.treefile` | every new name with its rule; the tree under the new names |
-| `exendin_figure.{svg,pdf,png}` | the figure: named interval synteny (A) and gene tree (B) |
+| `exendin_figure.{svg,pdf,png}` | the figure: named interval synteny (A), gene tree (B), exendin alignment (C) |

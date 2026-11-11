@@ -194,6 +194,8 @@ def main():
                          "pruned from the tree in B (not re-inferred) and their rows in C, e.g. BarImb")
     ap.add_argument("--aln", help="protein alignment of the tree (curated tip names): adds panel C, the exendin "
                                   "genes only, in tree order, under their new names")
+    ap.add_argument("--aln-font-pt", type=float,
+                    help="panel C text size; default: the figure's --font-pt, or smaller if needed to fit on one line")
     ap.add_argument("--aln-region", action="append", default=[],
                     help="START-END[:LABEL] in panel C's columns to shade and label, e.g. 52-90:hormone domain")
     ap.add_argument("--outdir", required=True)
@@ -492,7 +494,8 @@ def main():
     panel_c, ch = "", 0.0
     if a.aln:
         keep = [l.name for l in leaves(tree) if klass[l.name] in ("Exendin_anc", "copy")]
-        csvg = alignment_panel(a.aln, keep, rename, {t: COL[klass[t]] for t in keep}, W, fs, a.aln_region)
+        csvg = alignment_panel(a.aln, keep, rename, {t: COL[klass[t]] for t in keep}, W, fs, a.aln_region,
+                               a.aln_font_pt)
         if csvg:
             _, ch = dims(csvg)
             panel_c = (f'\n<text x="2" y="{H + fs * 1.1:.2f}" font-size="{fs + 1}" font-weight="bold">C</text>\n'
@@ -513,8 +516,8 @@ CLASSES = [("AILMFWV", "#80A0F0"), ("KR", "#F01505"), ("DE", "#C048C0"), ("NQST"
 RES_COL = {aa: c for aas, c in CLASSES for aa in aas}
 
 
-def alignment_panel(path, keep, rename, namecol, W, fs, regions):
-    """Panel C: the exendin rows of the alignment, tree order, all-gap columns removed, wrapped to width W."""
+def alignment_panel(path, keep, rename, namecol, W, fs, regions, fixed_fs=None):
+    """Panel C: the exendin rows of the alignment, tree order, all-gap columns removed, on one line of width W."""
     seqs, name = {}, None
     for line in open(path):
         line = line.strip()
@@ -535,10 +538,19 @@ def alignment_panel(path, keep, rename, namecol, W, fs, regions):
     rows = [(t, "".join(s[j] for j in cols)) for t, s in rows]
     n = len(cols)
     names = [rename.get(t, t) for t, _ in rows]
-    name_w = max(P.text_w(x, fs) for x in names) + 6
+    # one line, no wrapping: the font shrinks until names + every column fit the width
+    k = max(P.text_w(x, 1.0) for x in names)
+    fit = (W - 12) / (0.66 * n + k)
+    if fixed_fs:
+        fs = fixed_fs
+    elif fit < fs:
+        fs = fit
+    if fs < 5:
+        N.warn(f"panel C: {n} columns need {fs:.1f} pt text to fit on one line; trim the alignment or widen "
+               f"the figure (--width-mm) if that is too small for the journal")
+    name_w = P.text_w(max(names, key=lambda x: P.text_w(x, 1.0)), fs) + 6
     cw, rh = fs * 0.66, fs * 1.2
-    per = max(10, int((W - name_w - 6) // cw) // 10 * 10)
-    blocks = [(b, min(b + per, n)) for b in range(0, n, per)]
+    blocks = [(0, n)]
     mono = 'font-family="Menlo, Consolas, DejaVu Sans Mono, monospace"'
     out, y = [], fs * 0.4
     for b0, b1 in blocks:
@@ -570,7 +582,7 @@ def alignment_panel(path, keep, rename, namecol, W, fs, regions):
                 out.append(f'<text x="{x + cw / 2:.2f}" y="{yy + rh * 0.74:.2f}" font-size="{fs}" {mono} '
                            f'text-anchor="middle">{ch}</text>')
         y = top + len(rows) * rh + fs * 0.8
-    N.info(f"panel C: {len(rows)} exendin rows x {n} columns (of {L}; all-gap columns removed), {len(blocks)} block(s)")
+    N.info(f"panel C: {len(rows)} exendin rows x {n} columns (of {L}; all-gap columns removed), text {fs:.1f} pt")
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W:.1f}pt" height="{y:.1f}pt" viewBox="0 0 {W:.2f} {y:.2f}" '
             f'font-family="{P.FONT}">\n' + "\n".join(out) + "\n</svg>")
 
