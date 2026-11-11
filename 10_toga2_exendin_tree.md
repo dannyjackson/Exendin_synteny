@@ -10,9 +10,9 @@ TOGA2 files at any time. The tree is built from the curated alignment (next sect
   contribute; the log says which genes each run used.
 - **Ortholog projections:** kept only if TOGA2 calls them intact (status FI or I).
 - **Paralogous projections:** extra copies TOGA2 found by projecting a reference exendin
-  through a paralogous chain. Kept at **any status** by default, since these are the
-  tandem copies of interest and TOGA2 often scores them PI or worse. They are flagged in
-  the curation table. `--paralog-status FI,I` holds them to the same rule as orthologs.
+  through a paralogous chain. Held to the same rule: kept only if intact (FI or I), so
+  lost (L), uncertain (UL), missing (M) and partial (PI) paralogs are dropped.
+  `--paralog-status` sets a different list (e.g. `FI,I,PI`), or `any`.
 - **Left out:** retrogene projections, and CDS that are missing, shorter than 150 bp, or
   not a multiple of 3.
 
@@ -53,7 +53,8 @@ Read the log:
   projected. For HelSus, expect `LOC_00012324` (exendin-2) and `LOC_00012325` (exendin-4).
   `NONE` with a warning = that reference annotates no exendin, or its names were not
   resolved (wrong or missing GFF; check `3c`'s `have no name` warnings).
-- **`left out: ...`** = how many loci each filter removed. `candidates.tsv` keeps every one,
+- **`kept: orthologs with status FI,I; paralogs with status FI,I`** = the filters in force.
+- **`left out: ...`** = how many loci each filter removed (`paralog_status_L` and so on). `candidates.tsv` keeps every one,
   with its reason, so nothing disappears silently.
 - **One line per genome** = the kept tips with status and length. The precursors are 84–113 aa.
   A tip well outside that range is a model problem. The known case is HelCha exendin-3:

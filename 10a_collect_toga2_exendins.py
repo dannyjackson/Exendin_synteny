@@ -11,7 +11,8 @@ named glucagon-like (GCGL), the ancestral gene, as an outgroup for rooting.
 Filters (TOGA2 output only, nothing rebuilt):
   ortholog projections   status in --status (default FI,I = intact)
   paralogous projections (#paralog, or not classified as orthologs) status in
-                         --paralog-status (default: any; see the log for each one's status)
+                         --paralog-status (default: the same as --status, so a lost or
+                         partial paralog is dropped like a lost ortholog)
   retrogene / processed-pseudogene projections: left out
   every kept sequence: CDS present, length a multiple of 3, >= --min-cds
 Internal stops are reported, not filtered; that is a curation call.
@@ -89,7 +90,8 @@ def main():
     ap.add_argument("--name-map", help="TSV ref_gene<TAB>symbol[<TAB>description], all runs")
     ap.add_argument("--include-gcgl", action="store_true", help="also collect genes named glucagon-like (outgroup)")
     ap.add_argument("--status", default="FI,I", help="statuses kept for ortholog projections")
-    ap.add_argument("--paralog-status", default="any", help="statuses kept for paralogous projections, or 'any'")
+    ap.add_argument("--paralog-status", default="same",
+                    help="statuses kept for paralogous projections: 'same' as --status (default), a list, or 'any'")
     ap.add_argument("--min-cds", type=int, default=150)
     ap.add_argument("--outdir", required=True)
     a = ap.parse_args()
@@ -105,7 +107,10 @@ def main():
         name, _, path = g.partition("=")
         gffs[name].append(path)
     ok_status = set(a.status.split(","))
-    ok_para = None if a.paralog_status == "any" else set(a.paralog_status.split(","))
+    ok_para = (None if a.paralog_status == "any" else ok_status if a.paralog_status == "same"
+               else set(a.paralog_status.split(",")))
+    N.info(f"kept: orthologs with status {','.join(sorted(ok_status))}; paralogs with status "
+           f"{'any' if ok_para is None else ','.join(sorted(ok_para))}")
     os.makedirs(a.outdir, exist_ok=True)
 
     loci = []                                       # one per (run, query, locus)
