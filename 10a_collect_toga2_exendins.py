@@ -10,10 +10,15 @@ named glucagon-like (GCGL), the ancestral gene, as an outgroup for rooting.
 
 Filters (TOGA2 output only, nothing rebuilt):
   ortholog projections   status in --status (default FI,I = intact)
-  paralogous projections (#paralog, or not classified as orthologs) status in
+  paralogous projections (TOGA2's '#paralog' projections) status in
                          --paralog-status (default: the same as --status, so a lost or
                          partial paralog is dropped like a lost ortholog)
+  unclassified projections (in the annotation, but their transcript did not pass TOGA2's
+                         orthology step, e.g. a second isoform of an ortholog): left out
+                         unless --keep-unclassified; where they overlap an ortholog
+                         projection, that projection represents the locus anyway
   retrogene / processed-pseudogene projections: left out
+  --exclude-projection REGEX: projections never considered (a bad reference isoform)
   every kept sequence: CDS present, length a multiple of 3, >= --min-cds
 Internal stops are reported, not filtered; that is a curation call.
 
@@ -93,6 +98,12 @@ def main():
     ap.add_argument("--paralog-status", default="same",
                     help="statuses kept for paralogous projections: 'same' as --status (default), a list, or 'any'")
     ap.add_argument("--min-cds", type=int, default=150)
+    ap.add_argument("--exclude-projection",
+                    help="regex; projections whose name matches are ignored, e.g. 'LOC_00012325-mRNA-2#' "
+                         "(a reference isoform whose CDS is an annotation artifact)")
+    ap.add_argument("--keep-unclassified", action="store_true",
+                    help="keep projections TOGA2 annotated but did not classify as orthologs (their transcript "
+                         "failed the orthology step); default: dropped unless they overlap an ortholog")
     ap.add_argument("--outdir", required=True)
     a = ap.parse_args()
 
@@ -107,6 +118,8 @@ def main():
         name, _, path = g.partition("=")
         gffs[name].append(path)
     ok_status = set(a.status.split(","))
+    excl = re.compile(a.exclude_projection) if a.exclude_projection else None
+    n_excl = defaultdict(int)
     ok_para = (None if a.paralog_status == "any" else ok_status if a.paralog_status == "same"
                else set(a.paralog_status.split(",")))
     N.info(f"kept: orthologs with status {','.join(sorted(ok_status))}; paralogs with status "
@@ -141,6 +154,9 @@ def main():
                     if len(t) < 6 or line.startswith(("#", "track")):
                         continue
                     tx, gene, flag = T3C.parse_projection(t[3])
+                    if excl and excl.search(t[3]):
+                        n_excl[run] += 1
+                        continue
                     grp = group_of(tx, gene)
                     if grp:
                         projs.append(dict(projection=t[3], tx=tx, ref_gene=gene, flag=flag, group=grp,
@@ -155,8 +171,9 @@ def main():
                 o = orth.get(p["projection"])
                 p["status"] = status.get(p["projection"], "NA")
                 p["kind"] = ("retro" if p["flag"] in ("retro", "processed_pseudogene") else
-                             "paralog" if p["flag"] == "paralog" or (orth and not o) else "ortholog")
-                p["orthology_class"] = o[2] if o else ("paralog" if p["kind"] == "paralog" else "NA")
+                             "paralog" if p["flag"] == "paralog" else
+                             "unclassified" if (orth and not o) else "ortholog")
+                p["orthology_class"] = o[2] if o else p["kind"]
                 nt = seqs.get(p["projection"], "")
                 p["nt"] = nt[:-3] if nt[-3:] in ("TAA", "TAG", "TGA") else nt
             n_proj += len(projs)
@@ -178,6 +195,8 @@ def main():
                     cur, end = [], -1
                 if p is not None:
                     cur.append(p); end = max(end, p["end"])
+        if n_excl[run]:
+            N.info(f"run {run}: {n_excl[run]} projection(s) matching --exclude-projection ignored")
         exg = sorted(g for g, v in verdict.items() if v)
         N.info(f"run {run}: {len(exg)} reference gene(s) named exendin{'/GCGL' if a.include_gcgl else ''}: "
                f"{', '.join(exg[:12]) or 'NONE'}; {n_proj} projections")
@@ -217,6 +236,11 @@ def main():
             why.append(f"status_{l['status']}")
         elif l["kind"] == "paralog" and ok_para is not None and l["status"] not in ok_para:
             why.append(f"paralog_status_{l['status']}")
+        elif l["kind"] == "unclassified":
+            if not a.keep_unclassified:
+                why.append("not_orthology_classified")
+            elif l["status"] not in ok_status:
+                why.append(f"status_{l['status']}")
         if not nt:
             why.append("no_sequence")
         elif len(nt) % 3:

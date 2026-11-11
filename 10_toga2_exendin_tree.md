@@ -9,7 +9,16 @@ TOGA2 files at any time. The tree is built from the curated alignment (next sect
 - **Runs:** HelSus, HemCap, AnoCar and CroPor. Only references that annotate an exendin
   contribute; the log says which genes each run used.
 - **Ortholog projections:** kept only if TOGA2 calls them intact (status FI or I).
-- **Paralogous projections:** extra copies TOGA2 found by projecting a reference exendin
+- **The HelSus exendin-4 isoform `mRNA-2` is never used** (`--exclude-projection`). Its 419-bp
+  first exon is an annotation artifact (no protein support). It was the only model TOGA2
+  produced for HelCha exendin-3, which is replaced by the rebuilt model in step 3. In every
+  other genome, `mRNA-2` scored L/M/UL and failed TOGA2's orthology step, so excluding it
+  changes nothing there.
+- **Unclassified projections are left out:** these are in TOGA2's annotation, but their
+  transcript did not pass TOGA2's orthology step (typically a second isoform of an
+  ortholog). Where they overlap an ortholog, the ortholog's projection represents the
+  locus anyway. `--keep-unclassified` keeps them.
+- **Paralogous projections:** TOGA2's own `#paralog` projections, i.e. extra copies found
   through a paralogous chain. Held to the same rule: kept only if intact (FI or I), so
   lost (L), uncertain (UL), missing (M) and partial (PI) paralogs are dropped.
   `--paralog-status` sets a different list (e.g. `FI,I,PI`), or `any`.
@@ -44,6 +53,7 @@ python3 ${SCRIPTDIR}/10a_collect_toga2_exendins.py \
     --ref-gff HemCap=${GENOMEDIR}/HemCap_GCF_027244095.1/ncbi_dataset/data/GCF_027244095.1/genomic.gff \
     --ref-gff CroPor=${GENOMEDIR}/CroPor_GCF_001723895.1/ncbi_dataset/data/GCF_001723895.1/genomic.gff \
     --ref-gff AnoCar=$(ls ${GENOMEDIR}/AnoCar_*/ncbi_dataset/data/*/genomic.gff | head -1) \
+    --exclude-projection 'LOC_00012325-mRNA-2#' \
     --outdir collect 2> collect.log
 cat collect.log
 cut -f1-8,15-19 collect/candidates.tsv | column -t
