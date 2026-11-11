@@ -15,10 +15,10 @@ query_genes.bed (its locus). If those are missing, projections in query_annotati
 are grouped by reference gene and overlap instead. Projection names are
 transcript#gene#chain[#paralog|#retro]; the reference gene of each projection is named
 from --ref-gff (the annotation(s) the run projected: symbol from gene=/Name=, description
-from description=/Note=/product=), or from --name-map (ref_gene<TAB>symbol).
+from description=/Note=/product=; EviAnn's 'Similar to SYMBOL: ...' gives SYMBOL), or from
+--name-map (ref_gene<TAB>symbol).
   colour   exendin-family genes (exendin / GCGL / proglucagon by name): the fixed family
-           colours of every figure; other named genes: one pale colour per symbol, the
-           same in every species; genes without a usable name: 'uncharacterised'
+           colours of every figure; every other gene grey (--colour)
   filled   best projection status FI or I (loss_summary.tsv); hollow = PI, UL, M, L ...
   dashed   only paralogous or retrogene projections (#paralog, #retro, retro_ genes)
 
@@ -63,6 +63,15 @@ def first(d, *names):
 
 
 # ---------------- reference names ----------------
+SIMILAR = re.compile(r"^\s*similar to\s+([A-Za-z0-9][A-Za-z0-9._-]*)\s*:\s*(.*)$", re.I)
+
+
+def similar_to(desc):
+    """EviAnn 'Similar to SLC4A8: Electroneutral sodium ...' -> ('SLC4A8', 'Electroneutral sodium ...')."""
+    m = SIMILAR.match(desc or "")
+    return (m.group(1), m.group(2)) if m else ("", desc)
+
+
 def read_ref_names(gffs, name_map):
     """key (gene ID, Name, transcript ID, with and without gene-/rna- prefix and version) -> (symbol, description)."""
     names = {}
@@ -82,6 +91,8 @@ def read_ref_names(gffs, name_map):
                     if sym == at.get("ID") or ID_LIKE.match(sym):
                         sym = ""
                     desc = at.get("description") or at.get("Note") or at.get("product") or ""
+                    if not sym:
+                        sym, desc = similar_to(desc)
                     genes[at.get("ID", "")] = [sym, desc]
                     for k in ("ID", "Name", "gene", "locus_tag", "gene_id"):
                         if at.get(k):
@@ -94,6 +105,8 @@ def read_ref_names(gffs, name_map):
                 continue
             if not g[1] and (at.get("product") or at.get("Note")):
                 g[1] = at.get("product") or at.get("Note")
+            if not g[0]:
+                g[0], g[1] = similar_to(g[1])
             for k in ("ID", "Name", "transcript_id"):
                 if at.get(k):
                     names.setdefault(at[k], g)

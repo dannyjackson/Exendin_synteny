@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Publication-layout synteny figure of the SLC4A8-AQP5 interval. Not run on its own; used
-by 2b_plot_ncbi_synteny.py (NCBI annotations) and 3d_plot_toga2_interval.py (TOGA2 runs).
+by 2b_plot_ncbi_synteny.py (NCBI annotations) and 3c_plot_toga2_synteny.py (TOGA2 runs).
 
 Input to draw(): one entry per species
     {code: dict(bnd={'SLC4A8': feat, 'AQP5': feat}, genes=[feat, ...], empty='reason' or '')}
@@ -35,7 +35,9 @@ S = N.load_engine()            # parse_newick / leaves / prune / species_order o
 
 PT_PER_MM = 72 / 25.4
 FONT = "Arial, Helvetica, sans-serif"
-BOUNDARY_FILL = ("#4D4D4D", "#B3B3B3")          # left (SLC4A8), right (AQP5)
+BOUNDARY_FILL = ("#4D4D4D", "#4D4D4D")          # left (SLC4A8), right (AQP5); told apart by the headers
+OTHER = "other gene"
+OTHER_FILL = "#D3D3D3"
 UNCHAR = "uncharacterised"
 UNCHAR_FILL = "#E6E6E6"
 # light tab20 halves: other (non-family) genes, kept paler than the Okabe-Ito family colours
@@ -63,6 +65,9 @@ def add_args(ap, near_default=1000.0, split_default="family"):
     ap.add_argument("--font-pt", type=float, default=7.0, help="size of all text")
     ap.add_argument("--full-names", action="store_true", help="'Heloderma suspectum' instead of 'H. suspectum'")
     ap.add_argument("--labels", action="store_true", help="label every non-boundary gene")
+    ap.add_argument("--colour", choices=("family", "exendin", "name"), default="family",
+                    help="family: exendins and GCGL coloured, every other gene grey (default); "
+                         "exendin: only exendins coloured; name: one colour per gene symbol")
     ap.add_argument("--svg"); ap.add_argument("--pdf"); ap.add_argument("--png")
     ap.add_argument("--dpi", type=int, default=600)
     ap.add_argument("--layout", help="TSV of every drawn feature (true coordinates)")
@@ -210,13 +215,27 @@ def arrow(x0, x1, y, h, strand, min_w):
     return " ".join(f"{px:.2f},{py:.2f}" for px, py in pts), (x0, x1)
 
 
+def apply_colour_mode(lines_by, mode):
+    """family: non-family genes -> OTHER; exendin: GCGL/proglucagon too. name: unchanged."""
+    if mode == "name":
+        return
+    for ls in lines_by.values():
+        for ln in ls:
+            for f in ln["feats"]:
+                if f["kind"] != "gene":
+                    continue
+                keep = f["family"] and (mode == "family" or f["group"].startswith("exendin"))
+                if not keep:
+                    f["family"], f["group"] = False, OTHER
+
+
 def colours(lines_by, order):
     """family groups: fixed colours; other genes: OTHER_FILLS in order of first appearance."""
     fam, other = set(), []
     for q in order:
         for ln in lines_by.get(q, []):
             for f in sorted(ln["feats"], key=lambda f: f["x0"]):
-                if f["kind"] != "gene":
+                if f["kind"] != "gene" or f["group"] == OTHER:
                     continue
                 if f["family"]:
                     fam.add(f["group"])
@@ -230,6 +249,7 @@ def colours(lines_by, order):
     for i, g in enumerate(other):
         cm[g] = OTHER_FILLS[i % len(OTHER_FILLS)]
     cm[UNCHAR] = UNCHAR_FILL
+    cm[OTHER] = OTHER_FILL
     return famg, other, cm
 
 
@@ -301,6 +321,7 @@ def draw(species, a, bnames, legend_status=(), empty_default="nothing annotated"
     span = max([ln["span"] for ls in lines_by.values() for ln in ls] or [1])
     scale = (x1 - x0) / span
     min_w = 1.6
+    apply_colour_mode(lines_by, getattr(a, "colour", "family"))
     famg, other, cmap = colours(lines_by, order)
 
     y = margin + header_h
@@ -357,7 +378,7 @@ def draw(species, a, bnames, legend_status=(), empty_default="nothing annotated"
                     out.append(f'<polygon points="{pts}" fill="{col}"><title>{tip}</title></polygon>')
                 else:
                     col = cmap.get(f["group"], UNCHAR_FILL)
-                    edge = col if f["family"] else "#555"
+                    edge = col if f["family"] else "#777"
                     dash = ' stroke-dasharray="1.2,0.8"' if f.get("dashed") else ""
                     fill = col if f["filled"] else "#fff"
                     sw = 0.7 if (not f["filled"] or f.get("dashed")) else 0.35
@@ -410,15 +431,15 @@ def draw(species, a, bnames, legend_status=(), empty_default="nothing annotated"
     # (text, fill, edge, dashed, italic)
     items = [(legend_name(g), cmap[g], cmap[g], False, False) for g in famg]
     items += [(g, cmap[g], "#555", False, bool(re.match(r"^[A-Z][A-Z0-9-]*\+?$", g))) for g in other]
-    if any(f["kind"] == "gene" and f["group"] == UNCHAR for ls in lines_by.values() for ln in ls for f in ln["feats"]):
-        items.append((UNCHAR, UNCHAR_FILL, "#555", False, False))
+    for g, fill in ((UNCHAR, UNCHAR_FILL), (OTHER, OTHER_FILL)):
+        if any(f["kind"] == "gene" and f["group"] == g for ls in lines_by.values() for ln in ls for f in ln["feats"]):
+            items.append((g, fill, "#555", False, False))
     drawn = [f for ls in lines_by.values() for ln in ls for f in ln["feats"] if f["kind"] == "gene"]
     for t, filled, dashed in legend_status:
         if (dashed and any(f.get("dashed") for f in drawn)) or \
            (not dashed and not filled and any(not f["filled"] for f in drawn)) or (filled and not dashed):
             items.append((t, "#888" if filled else "#fff", "#000", dashed, False))
-    items += [(bnames[0], BOUNDARY_FILL[0], BOUNDARY_FILL[0], False, True),
-              (bnames[1], BOUNDARY_FILL[1], BOUNDARY_FILL[1], False, True)]
+    items += [(f"{bnames[0]} / {bnames[1]}", BOUNDARY_FILL[0], BOUNDARY_FILL[0], False, True)]
     lx = x0 + sb * scale + 3 + text_w(fmt_kb(sb), fs) + 12
     ly = y
     for text, fill, edge, dashed, italic in items:

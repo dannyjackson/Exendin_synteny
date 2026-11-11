@@ -93,3 +93,26 @@ reused and only a missing GFF or protein file is fetched), and indexes each FAST
 summary lists which species have an NCBI annotation; unannotated assemblies (e.g. HelCha)
 are empty rows in step 2 and are still searched in step 4. Tens of GB: run in `tmux` or
 `sinteractive`.
+
+## 4. TOGA2 reference annotations
+The non-HelSus TOGA2 runs (`target_HemCap`, `query_*/target_CroPor`) name genes by their
+reference's annotation. `3c_plot_toga2_synteny.py` needs these GFFs to name genes. They must
+be the same assemblies TOGA2 used (accessions from Elise). Genome FASTAs are not needed;
+add `genome` to `--include` if you want them.
+
+| code | species | accession |
+|---|---|---|
+| CroPor | *Crocodylus porosus* | GCF_001723895.1 |
+| HemCap | *Hemicordylus capensis* | GCF_027244095.1 |
+
+```
+cd /data/Wilson_Lab/data/Exendin_Evolution/genomes
+
+datasets download genome accession GCF_001723895.1 --include gff3,protein,seq-report --filename CroPor.zip
+unzip -o -q CroPor.zip -d CroPor_GCF_001723895.1 && rm CroPor.zip
+
+datasets download genome accession GCF_027244095.1 --include gff3,protein,seq-report --filename HemCap.zip
+unzip -o -q HemCap.zip -d HemCap_GCF_027244095.1 && rm HemCap.zip
+
+ls -lh CroPor_GCF_001723895.1/ncbi_dataset/data/GCF_001723895.1/genomic.gff HemCap_GCF_027244095.1/ncbi_dataset/data/GCF_027244095.1/genomic.gff
+```

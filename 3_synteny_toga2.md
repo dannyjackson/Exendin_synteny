@@ -1,11 +1,12 @@
 # Synteny from TOGA2 annotations
 The step-2 figure from TOGA2 instead of NCBI: same rows, layout and colours. TOGA2 projects
-the HelSus EviAnn annotation onto each query, so it finds copies NCBI did not annotate, but
-a model is only as good as the reference isoform behind it (HelCha exendin-3: TOGA2 used
+a reference annotation onto each query (five runs here: HelSus, HemCap, AnoCar, CroPor and
+their integration), so it finds copies NCBI did not annotate, but a model is only as good
+as the reference isoform behind it (HelCha exendin-3: TOGA2 used
 isoform `mRNA-2`, whose first exon has no protein support, and produced a 198-aa model; see
 step 4.1).
 
-Steps 1–2 are the old repo's TOGA2 collection, unchanged; step 3 colours tips by name.
+Steps 1–2 are the old repo's TOGA2 collection, unchanged; their `tips.tsv` feeds step 4. Step 3 draws the figures: every TOGA2 gene between SLC4A8 and AQP5, for each of the five TOGA2 runs, in the publication layout of step 2.
 
 Run the set-up block of `0_Environment_management.md` first.
 ```
@@ -40,29 +41,7 @@ python3 ${SCRIPTDIR}/3b_collect_toga2_exendins.py \
 `aa_len` far from 84–113 aa = a model problem (the old `4_toga2_exendin_tree.md` step 2);
 many2many tips are copies TOGA2 could not split. `tips.tsv` feeds step 4's query set.
 
-## 3. Plot
-```
-python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --run ${TOGADIR}/target_HelSus \
-    --tips toga2_exendins/tips.tsv --reference-table reference_exendins.tsv \
-    --boundaries SLC4A8,AQP5=LOC_00012326 --gff ${HELSUS_EVIANN_GFF} \
-    --species-table ../species.tsv --species-tree ${SPTREE} --top GalGal \
-    --svg toga2_synteny.svg --png toga2_synteny.png --layout toga2_synteny.tsv 2> toga2_synteny.log
-cat toga2_synteny.log
-```
-For the paralog version, use `--tips toga2_exendins_paralogs/tips.tsv` and other output names.
-- **Log.** The name each reference gene got (`LOC_00012324 ... -> exendin-2`) and the
-  boundary IDs; check the SLC4A8 ID. Override a name with `--name-map`
-  (`gene_id<TAB>group`).
-- **Drawing.** Colour = name of the reference exendin(s) a tip is orthologous to
-  (many2many → combined name, e.g. `exendin-2/4`). Filled = passed 3b's filters, hollow =
-  failed, dashed = paralogous projection. Labels are 3b tip names (`EX2`, `EX4b`, `EX2p`).
-- **Rows.** `--species-table` gives every species a row in step-2 order ("not a query in
-  this TOGA2 run" for chicken and any species TOGA2 did not cover). `//` breaks as in
-  step 2.
-- **Coordinates** are TOGA2's (HelSus `chr2`), not NCBI's (`NC_139459.1`): the figures line
-  up by species and gene order, not by position.
-
-## 4. Every gene in the interval, one figure per TOGA2 run (publication layout)
+## 3. Plot: every gene in the interval, one figure per TOGA2 run (`3c`, new)
 The same layout as the step-2 figure (`lib_pub_synteny.py`), drawn from TOGA2 instead of
 NCBI. This time every gene TOGA2 annotated between SLC4A8 and AQP5 is drawn, not only the
 exendins. There is one figure per run:
@@ -80,7 +59,7 @@ cd ${WORK}/synteny_toga2
 mkdir -p interval && cd interval
 ```
 
-### 4.1 Reference gene names
+### 3.1 Reference gene names
 TOGA2 names each projection `transcript#gene#chain`. The `gene` field is whatever the
 reference annotation called it, so first check whether each run already uses gene
 symbols:
@@ -109,36 +88,36 @@ If a GFF is missing and its run uses IDs, download that reference's annotation i
 `${GENOMEDIR}` the same way as step 1.3 (`datasets download genome accession <ACC> --include gff3`),
 using the accession TOGA2 used. Ask Elise which assemblies those were.
 
-### 4.2 One figure per run
+### 3.2 One figure per run
 `--near-kb 0` (the default here): in a split genome, each boundary line extends as far as
 the longest complete interval among the species. `--split-genes all` (also the default)
 draws every gene on that stretch, not only exendins.
 ```
-python3 ${SCRIPTDIR}/3d_plot_toga2_interval.py --dirs "${TOGADIR}/target_HelSus/query_{q}" \
+python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/target_HelSus/query_{q}" \
     --ref-gff ${HELSUS_EVIANN_GFF} --boundaries SLC4A8,AQP5=LOC_00012326 \
     --species-table ../../species_toga2.tsv --species-tree ${SPTREE} \
     --svg interval_HelSus.svg --pdf interval_HelSus.pdf --png interval_HelSus.png \
     --layout interval_HelSus_layout.tsv --genes-out interval_HelSus_genes.tsv 2> interval_HelSus.log
 
-python3 ${SCRIPTDIR}/3d_plot_toga2_interval.py --dirs "${TOGADIR}/target_HemCap/query_{q}" \
+python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/target_HemCap/query_{q}" \
     --ref-gff ${HEMCAP_GFF} \
     --species-table ../../species_toga2.tsv --species-tree ${SPTREE} \
     --svg interval_HemCap.svg --pdf interval_HemCap.pdf --png interval_HemCap.png \
     --layout interval_HemCap_layout.tsv --genes-out interval_HemCap_genes.tsv 2> interval_HemCap.log
 
-python3 ${SCRIPTDIR}/3d_plot_toga2_interval.py --dirs "${TOGADIR}/query_{q}/target_AnoCar/output" \
+python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/query_{q}/target_AnoCar/output" \
     --ref-gff ${ANOCAR_GFF} \
     --species-table ../../species_toga2.tsv --species-tree ${SPTREE} \
     --svg interval_AnoCar.svg --pdf interval_AnoCar.pdf --png interval_AnoCar.png \
     --layout interval_AnoCar_layout.tsv --genes-out interval_AnoCar_genes.tsv 2> interval_AnoCar.log
 
-python3 ${SCRIPTDIR}/3d_plot_toga2_interval.py --dirs "${TOGADIR}/query_{q}/target_CroPor/output" \
+python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/query_{q}/target_CroPor/output" \
     ${CROPOR_GFF:+--ref-gff ${CROPOR_GFF}} \
     --species-table ../../species_toga2.tsv --species-tree ${SPTREE} \
     --svg interval_CroPor.svg --pdf interval_CroPor.pdf --png interval_CroPor.png \
     --layout interval_CroPor_layout.tsv --genes-out interval_CroPor_genes.tsv 2> interval_CroPor.log
 
-python3 ${SCRIPTDIR}/3d_plot_toga2_interval.py --dirs "${TOGADIR}/integrated_annotations/query_{q}/integrated" \
+python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/integrated_annotations/query_{q}/integrated" \
     --ref-gff ${ANOCAR_GFF} ${CROPOR_GFF:+--ref-gff ${CROPOR_GFF}} --ref-gff ${HEMCAP_GFF} --ref-gff ${HELSUS_EVIANN_GFF} \
     --boundaries SLC4A8,AQP5=LOC_00012326 \
     --species-table ../../species_toga2.tsv --species-tree ${SPTREE} \
@@ -148,27 +127,28 @@ python3 ${SCRIPTDIR}/3d_plot_toga2_interval.py --dirs "${TOGADIR}/integrated_ann
 grep -h "warn" interval_*.log | sort | uniq -c | sort -rn | head -40
 ```
 
-### 4.3 Check each log before reading its figure
+### 3.3 Check each log before reading its figure
 - **`N queries: ...`** should list all 14 TOGA2 genomes. A genome with no files in a run
   is drawn as "no TOGA2 annotation found".
 - **`... have no name`**: reference IDs that the script could not resolve. Those genes are drawn as
-  "uncharacterised". Fix this with `--ref-gff` / `--name-map` (4.1).
+  "uncharacterised". Fix this with `--ref-gff` / `--name-map` (3.1).
 - **Boundaries:** each genome shows either a pair (`SLC4A8 … and AQP5 … on <contig>, N kb
   apart`) or a single gene (`(no pair on one contig)`). In the HelSus run, AQP5 is only
   found through `AQP5=LOC_00012326`. In the other runs, check that every genome found both.
   `no SLC4A8 gene` in most genomes means the symbol is spelled differently in that
   reference. Pass its ID as `SLC4A8=<ref gene ID>`.
 - **`not drawn`** lists family genes outside the interval (as in step 2).
-- **`colours repeat`**: more than 12 distinct non-family genes are drawn. Add `--labels`
-  (gene names above each gene) or narrow `--near-kb`.
+- **Boundary names:** the HelSus EviAnn annotation names genes `Similar to SLC4A8: ...`. The
+  script reads `SLC4A8` from that, so every genome should now report an SLC4A8. If most
+  genomes still say `no SLC4A8 gene`, pass the reference ID: `SLC4A8=<ref gene ID>`.
 - `interval_<run>_genes.tsv` lists every gene in or near the interval, with its query gene
   ID, symbol, TOGA2 status and reference gene. Use it to check any gene on the figure.
 
-### 4.4 Reading the figures
-- **Colour:** exendin-family genes (exendin-N, GCGL, proglucagon) keep the colours used in every
-  other figure. Every other named gene gets one pale colour, the same in every genome of
-  that figure. The gene symbols in the legend are in italics. A pale colour can mean
-  different genes in different runs' figures, so read each figure against its own legend.
+### 3.4 Reading the figures
+- **Colour:** exendins and GCGL keep the fixed colours used in every figure. **Every other
+  gene is grey.** `--colour exendin` greys GCGL too. `--colour name` gives each gene symbol
+  its own pale colour, for checking which genes are which. `interval_<run>_genes.tsv` names
+  every gene, grey or not. SLC4A8 and AQP5 are both dark grey; the headers say which end is which.
 - **Filled** = TOGA2 status FI/I. **Hollow** = PI, UL, M or L (not intact). **Dashed outline** =
   only paralogous or retrogene projections.
 - **Reference genome rows:** a reference is only drawn if it is also a query. HelSus is (its
