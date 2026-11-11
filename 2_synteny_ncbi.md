@@ -81,24 +81,40 @@ each species the log gives:
 `ncbi_exendin_aa.fa` (family proteins) and `ncbi_boundary_aa.fa` now hold the TOGA2 genomes
 and chicken only; chicken's GCGL protein in it is the gene-tree outgroup.
 
-## 3. Plot
+## 3. Plot (publication figure)
+Only the SLC4A8–AQP5 interval is drawn. Text is 7 pt at the final size; there is no title,
+no contig names and no notes, since those go in the caption.
 ```
 python3 ${SCRIPTDIR}/2b_plot_ncbi_synteny.py --loci ncbi_loci/ncbi_loci.tsv \
-    --species-tree ${SPTREE} --top GalGal \
-    --title "Exendin-family genes between SLC4A8 and AQP5 (NCBI annotations, TOGA2 genomes)" \
-    --svg ncbi_synteny.svg --png ncbi_synteny.png --layout ncbi_synteny.tsv 2> ncbi_synteny.log
+    --species-table ../species_toga2.tsv --species-tree ${SPTREE} --top GalGal \
+    --svg ncbi_synteny.svg --pdf ncbi_synteny.pdf --png ncbi_synteny.png \
+    --layout ncbi_synteny.tsv 2> ncbi_synteny.log
 cat ncbi_synteny.log
+grep "not drawn" ncbi_synteny.log          # every family gene left out, and why
 ```
-- **Tree.** `[info] tree tips with no matching species (pruned)` now lists every Cactus taxon
-  without a TOGA2 projection: expected. `[warn] species not in the tree (drawn below it)`
-  should name only chicken (with `--top GalGal` it is drawn first instead). Any TOGA2 genome
-  in that warning has a code that does not match its tree tip: place it with `--tree-map`
-  (`tree_tip<TAB>code`).
-- **Drawing.** Filled = protein-coding; hollow = pseudogene or other biotype. Tracks are
-  oriented with SLC4A8 on the left; a long boundary gene is clipped (`//` on the gene).
-  Hover in the SVG for symbol, description, placement and protein.
-- **Rows.** A species with no NCBI annotation is an empty row saying so; that is not absence.
-- **`//` on a track** = a stretch over `--max-gap-kb` (1000) with nothing drawn, shortened
-  to `--break-kb` (20) and labelled with its true length. Separate tracks for one species =
-  different contigs, i.e. an assembly break. Hover text and `--layout` keep true coordinates.
-- `--placements interval,near_boundary,unplaced,elsewhere` draws every matched gene.
+- **One contig carries both SLC4A8 and AQP5:** the species gets one line, from SLC4A8 to AQP5.
+  Genes that 2a counted as `interval` only because of its `--pad-kb` 500 margin are **not
+  drawn**. They are listed as `outside the SLC4A8-AQP5 interval`. Check HelSus: its copies
+  118 and 379 kb from GCGL may fall here.
+- **SLC4A8 and AQP5 are on different contigs:** the species gets two lines. The SLC4A8 contig
+  is left-aligned and the AQP5 contig right-aligned, so each sits at its end of the
+  interval. Each line shows only the family genes on its interval side, within `--near-kb`
+  (1000). Family genes on the far side are logged as `on the far side of ...`. A species
+  with only one boundary annotated gets one such line.
+- **Orientation:** SLC4A8 is always on the left. A contig with only one boundary is oriented
+  by that gene's strand in HelSus (`--reference-query`). The first log line gives the
+  strands used.
+- **Family genes on a contig with no boundary** are left out (`--unplaced` draws them).
+- **Tree:** the `pruned` line lists the Cactus taxa without a TOGA2 projection, which is
+  expected. `not in the tree` should name only GalGal, which `--top` draws above the tree.
+  Any TOGA2 genome named there needs a `--tree-map` row (`tree_tip<TAB>code`).
+- **Reading the figure:** filled = protein-coding, hollow = pseudogene. Arrows give the
+  strand after orientation. `//` = a stretch longer than `--max-gap-kb` (1000) with nothing
+  drawn, cut to `--break-kb` (20). Boundary genes are clipped to `--clip-kb` (15) on their
+  outer side. "no NCBI annotation" means the assembly was never annotated, not that the
+  genes are absent.
+- **Size:** `--width-mm 180` (double column, default) or `--width-mm 88` (single column).
+  `--font-pt` sets every label. `--full-names` writes *Heloderma suspectum* instead of
+  *H. suspectum*, and `--labels` puts a label on each gene. The PDF is vector, for
+  submission. The PNG is `--dpi` 600. Hover text in the SVG and the `--layout` table keep
+  the true coordinates.
