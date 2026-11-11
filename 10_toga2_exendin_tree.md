@@ -296,6 +296,75 @@ python3 ${SCRIPTDIR}/4h_draw_tree.py --tree tree/exendin_codon.rooted.nwk --grou
 If you trimmed the protein alignment in step 3, cut the codon alignment to match
 (`seqkit subseq -r 1:<3 x protein columns>`).
 
+## 5. Name the genes and draw the figure
+Names come from the tree and from each gene's position in its genome:
+
+| Name | Rule |
+|---|---|
+| `<Sp>_GCGL` | every tip in the GCGL clade |
+| `<Sp>_Exendin_anc` | the ancestral anguimorph exendin: one gene per genome in the clade that holds the Shinisaurus, Heloderma and anguid orthologues |
+| `<Sp>_A`, `_B`, `_C` … | other exendin genes, in order from that genome's Exendin_anc **toward AQP5** |
+| `<Sp>_Z`, `_Y`, `_X` … | other exendin genes, in order from Exendin_anc **toward SLC4A8** |
+| `<Sp>_U1`, `_U2` … | exendin genes on a different contig from Exendin_anc, which cannot be ordered |
+| `*_GCG`, `*_GIP` | outgroups, unchanged |
+
+Only exendin genes are counted for the letters; GCGL and other genes are skipped.
+
+**Choosing the two clades.** Pass tips whose smallest common clade *is* that gene:
+- **Exendin_anc:** one Heloderma, one Shinisaurus and one anguid gene of the
+  one-per-genome clade. In the current tree that is `HelSus_Ex2_Ex4`, `ShiCro_Ex2_Ex4` and
+  `ElgMul_Ex2_Ex4`. The log lists every tip in the clade: check it contains no GCGL and
+  nothing you would call a copy.
+- **GCGL:** chicken GCGL and one squamate GCGL, e.g. `GalGal_GCGL,HelSus_GCGL`. Use the old
+  name, e.g. `HelSus_Ex3_Ex4`, if the GCGL rows were not renamed in step 3.
+
+```
+cd ${WORK}/toga2_exendin_tree
+GENES=../synteny_toga2/interval/interval_HelSus_genes.tsv      # from step 3 (3c --genes-out)
+ls ${GENES}
+python3 ${SCRIPTDIR}/10f_name_genes_figure.py --tree tree/exendin_aa.treefile --outgroup "$(cat tree/outgroup.txt)" \
+    --anc-tips HelSus_Ex2_Ex4,ShiCro_Ex2_Ex4,ElgMul_Ex2_Ex4 --gcgl-tips GalGal_GCGL,HelSus_Ex3_Ex4 \
+    --candidates collect/candidates.tsv --curation-log curated/exendin_log.tsv \
+    --rescued HelCha_Ex3=rescued/HelCha_Ex3.exons.tsv --genes ${GENES} \
+    --species-table ../species_toga2.tsv --species-tree ${SPTREE} \
+    --outdir names --svg exendin_figure.svg --pdf exendin_figure.pdf --png exendin_figure.png 2> names.log
+cat names.log
+column -t -s$'\t' names/names.tsv
+```
+Read the log before the figure:
+- **`N genes in the Exendin_anc clade`** (e.g. ElgCoe, ShiCro): a genome has more than one
+  gene there. The one closest to the clade's base is called Exendin_anc, and the others
+  become lettered copies. If synteny or the tree says another is the orthologue, override it.
+- **`no Exendin_anc; copies counted from …GCGL`**: e.g. HelCha, where TOGA2 projected no
+  Exendin_anc orthologue. Its copies are lettered from GCGL instead, so its letters are
+  not directly comparable with HelSus's. Note this in the legend, or override the names.
+- **`no boundary on the anchor's contig`**: the AQP5 direction was assumed, so check those
+  letters by hand.
+- **`no coordinates`**: a tip that isn't in `candidates.tsv`. Give it with `--coords`
+  (`tip contig start end strand`) or `--rescued`.
+
+**Overrides.** Write a table of `old_tip<TAB>new_name` and pass it with `--names overrides.tsv`.
+Each override is marked in `names.tsv`. `names.tsv` records every name with the rule and
+distance behind it, and `names/renamed.treefile` is the tree under the new names.
+
+**The figure** is 180 mm wide (`--width-mm`; panel A is `--left-mm` 105), with 7 pt text, and
+written as a vector PDF.
+- **Panel A:** each genome's SLC4A8–AQP5 interval from the TOGA2 run, with every exendin-family
+  gene labelled by its new name.
+  - Colours: GCGL green, Exendin_anc blue, lettered copies orange, other genes grey.
+  - Hollow genes are exendin loci in the TOGA2 annotation that are not in the tree (not
+    intact, or curated out).
+  - `--no-context` hides the grey genes. `--label-tiers 2` makes it shorter when labels
+    are sparse.
+- **Panel B:** the GIP-rooted tree with the same names and colours.
+  - Filled dot = UFBoot ≥ 95 and SH-aLRT ≥ 80. Open dot = UFBoot ≥ 70.
+
+To carry the names into the alignment as well:
+```
+cut -f1,2 names/names.tsv | tail -n +2 > names/map.tsv
+seqkit replace -p '^(\S+)' -r '{kv}' -k names/map.tsv aln1/exendin.aa.fa > aln1/exendin.aa.named.fa
+```
+
 ## Outputs
 | File | Content |
 |---|---|
@@ -310,3 +379,5 @@ If you trimmed the protein alignment in step 3, cut the codon alignment to match
 | `tree/exendin_aa.{treefile,iqtree,svg,png}` | protein ML tree, rooted on GIP, and its drawing |
 | `tree/AUtest.iqtree` | AU test of the ML tree against H1–H3 |
 | `tree/exendin_codon.*` | optional codon tree of the exendins and GCGL |
+| `names/names.tsv`, `names/renamed.treefile` | every new name with its rule; the tree under the new names |
+| `exendin_figure.{svg,pdf,png}` | the figure: named interval synteny (A) and gene tree (B) |

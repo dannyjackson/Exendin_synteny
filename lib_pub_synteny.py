@@ -65,6 +65,7 @@ def add_args(ap, near_default=1000.0, split_default="family"):
     ap.add_argument("--font-pt", type=float, default=7.0, help="size of all text")
     ap.add_argument("--full-names", action="store_true", help="'Heloderma suspectum' instead of 'H. suspectum'")
     ap.add_argument("--labels", action="store_true", help="label every non-boundary gene")
+    ap.add_argument("--label-tiers", type=int, default=3, help="rows of labels above a line, for genes close together")
     ap.add_argument("--colour", choices=("family", "exendin", "name"), default="family",
                     help="family: exendins and GCGL coloured, every other gene grey (default); "
                          "exendin: only exendins coloured; name: one colour per gene symbol")
@@ -315,9 +316,10 @@ def draw(species, a, bnames, legend_status=(), empty_default="nothing annotated"
     name_w = max([text_w(t, fs) for t, _ in labels.values()] or [20]) + 10
     x0, x1 = margin + tree_w + name_w, W - margin - 2
     line_h, row_gap = fs * 0.95, fs * 0.75
-    line_gap = fs * (2.35 if a.labels else 1.25)
+    tiers = getattr(a, "label_tiers", 3) if a.labels else 0
+    line_gap = fs * (1.25 + 1.05 * tiers)
     gene_h = fs * 0.95
-    header_h = fs * (2.6 if a.labels else 1.6)
+    header_h = fs * (1.6 + 1.05 * tiers)
     span = max([ln["span"] for ls in lines_by.values() for ln in ls] or [1])
     scale = (x1 - x0) / span
     min_w = 1.6
@@ -331,7 +333,7 @@ def draw(species, a, bnames, legend_status=(), empty_default="nothing annotated"
         if i and q not in top and order[i - 1] in top:
             y += row_gap * 1.5
         if a.labels and i:
-            y += fs * 1.1
+            y += fs * 1.05 * tiers  # room for the label tiers above the row
         ys = [y + line_h / 2 + k * line_gap for k in range(nl)]
         rows_y.append((q, ys))
         centre[q] = sum(ys) / len(ys)
@@ -384,14 +386,14 @@ def draw(species, a, bnames, legend_status=(), empty_default="nothing annotated"
                     sw = 0.7 if (not f["filled"] or f.get("dashed")) else 0.35
                     out.append(f'<polygon points="{pts}" fill="{fill}" stroke="{edge}" stroke-width="{sw}"{dash}>'
                                f'<title>{tip}</title></polygon>')
-                    if a.labels:
-                        label_slots.append(((gx0 + gx1) / 2, f["label"]))
+                    if a.labels and f.get("label"):
+                        label_slots.append(((gx0 + gx1) / 2, f["label"], f.get("label_italic")))
                 lay.append([q, ln["contig"], ln["align"], f["kind"], f["symbol"], f["group"], f["start"],
                             f["end"], f["strand"], f["ostrand"], f"{gx0:.2f}", f"{gx1:.2f}"])
             if label_slots:
-                tiers = S.place_labels([(cx, text_w(t, fs)) for cx, t in label_slots], max_tiers=2)
-                for (cx, t), k in zip(label_slots, tiers):
-                    sym = bool(re.match(r"^[A-Z][A-Z0-9-]*\+?$", t)) and t != "GCGL"
+                tier_of = S.place_labels([(cx, text_w(t, fs)) for cx, t, _ in label_slots], max_tiers=tiers)
+                for (cx, t, it), k in zip(label_slots, tier_of):
+                    sym = it if it is not None else (bool(re.match(r"^[A-Z][A-Z0-9-]*\+?$", t)) and t != "GCGL")
                     T(cx, yy - gene_h / 2 - 1.5 - k * fs * 1.05, t, text_anchor="middle",
                       **({"font_style": "italic"} if sym else {}))
 
