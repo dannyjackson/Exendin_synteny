@@ -19,6 +19,7 @@ or duplicated, whether or not anyone annotated a gene there.
 
 Run the set-up block of `0_Environment_management.md` first.
 ```
+cd ${SCRIPTDIR} && git pull 
 module load cactus/3.3.0          # halLiftover, halStats
 mkdir -p ${WORK}/synteny_cactus && cd ${WORK}/synteny_cactus
 ls -lh ${CACTUSDIR}/*.hal
