@@ -384,6 +384,34 @@ cut -f1,2 names/names.tsv | tail -n +2 > names/map.tsv
 seqkit replace -p '^(\S+)' -r '{kv}' -k names/map.tsv aln1/exendin.aa.fa > aln1/exendin.aa.named.fa
 ```
 
+## 6. Gene table for one genome
+Every exendin-family gene of one genome (GCGL, Exendin_anc, lettered copies) in one table,
+in chromosome order:
+- **Name and position:** the new name and the tip it was, with coordinates and strand.
+- **TOGA2:** the run that found it and the other runs that also did, ortholog/paralog,
+  status, reference gene and projection.
+- **Curation and sequence:** any curation action (trim, rebuilt model), protein length,
+  internal stops and the protein.
+- **Peptide:** the mature peptide, and which published exendin it is. The matching is
+  `5a_assign_nomenclature.py`'s.
+```
+python3 ${SCRIPTDIR}/10g_gene_table.py --species HelSus --names names/names.tsv \
+    --candidates collect/candidates.tsv --curation-log curated/exendin_log.tsv \
+    --aa curated/exendin_aa.fa --reference ${SCRIPTDIR}/4_reference_peptides.fa \
+    --out names/HelSus_exendins.tsv
+```
+The screen shows name, position, status, length, verdict and mature peptide. The TSV has
+everything. Use `--species HelCha` (or any other code) for another genome.
+- **Coordinates** are those of the TOGA2 query assembly. For HelSus that is the EviAnn
+  naming (`chr2`), the same assembly as NCBI's `NC_139459.1` (chr2) under another
+  sequence name.
+- **The verdict:**
+  - `published EXENDINn exactly`: this gene encodes the peptide purified from venom.
+  - `EXENDINn-type (x%)`: same peptide class, different sequence.
+  - `no published match`: a copy that has never been described as a peptide.
+- **`peptide_found_by`** other than `motif`: the hormone domain was located by a fallback,
+  so check that row's mature peptide by eye.
+
 ## Outputs
 | File | Content |
 |---|---|
@@ -400,3 +428,4 @@ seqkit replace -p '^(\S+)' -r '{kv}' -k names/map.tsv aln1/exendin.aa.fa > aln1/
 | `tree/exendin_codon.*` | optional codon tree of the exendins and GCGL |
 | `names/names.tsv`, `names/renamed.treefile` | every new name with its rule; the tree under the new names |
 | `exendin_figure.{svg,pdf,png}` | the figure: named interval synteny (A), gene tree (B), exendin alignment (C) |
+| `names/<Sp>_exendins.tsv` | per-genome gene table: names, positions, TOGA2 facts, mature peptide, published match, protein |
