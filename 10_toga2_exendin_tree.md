@@ -70,6 +70,32 @@ Read the log:
   A tip well outside that range is a model problem. The known case is HelCha exendin-3:
   TOGA2 used reference isoform `mRNA-2`, so expect ~198 aa.
 
+## 1b. Rebuild HelCha exendin-3 (no TOGA2 model)
+With `mRNA-2` excluded, TOGA2 has no model for HelCha's exendin-3 locus: its `mRNA-1`
+never reached TOGA2's orthology step (no usable chain over the canonical exon 1). The gene is
+rebuilt from the published *H. horridum* exendin-3 cDNA (AJ580309) aligned to the HelCha
+contig, as in Exendin_evolution, and added in step 3 with `--add-cds`.
+```
+mkdir -p rescued
+cat << 'EOF' > rescued/AJ580309.fa
+>AJ580309.1 Heloderma horridum mRNA for exendin 3
+GGTGCCTGTGCAAAGGAGAAGATGAAAATCATCCTGTGGCTGTGTGTTTTCGGGCTGTTCCTTGCAACTT
+TATTCCCTGTCAGCTGGCAAATGCCTGTTGAATCTGGGTTGTCTTCTGAGGATTCTGCAAGCTCAGAAAG
+CTTTGCTTCGAAGATTAAGCGACATAGTGATGGAACATTTACCAGTGACTTGTCAAAACAGATGGAAGAG
+GAGGCAGTGCGGTTATTTATTGAGTGGCTTAAGAACGGAGGACCAAGTAGCGGGGCACCTCCGCCATCGG
+GTTAAGGTCTTTCAATTGTGGAACAAGACACACACCTGATGTTTGACGACCATTTTAAAGAAATGTTTCC
+AGCAATAAGTCACATGTCTTTGTTTCCAATTAGTGAGCGACACAGCC
+EOF
+HELCHA_FASTA=$(ls ${GENOMEDIR}/HelCha_GCA_026122225.1/ncbi_dataset/data/GCA_026122225.1/*_genomic.fna)
+grep -c JANEZZ010000386.1 ${HELCHA_FASTA}.fai          # must be 1
+python3 ${SCRIPTDIR}/lib_rescue_locus.py --genome ${HELCHA_FASTA} --contig JANEZZ010000386.1 \
+    --query rescued/AJ580309.fa --name HelCha_Ex3 --outdir rescued
+cat rescued/HelCha_Ex3.exons.tsv rescued/HelCha_Ex3.aa.fa
+```
+Expect 3 exons on the minus strand covering the cDNA end to end, exon 1 near
+4,399,218–4,399,326, and an 87-aa protein identical to the published exendin-3 precursor
+(P20394): `MKIILWLCVFGLFLATLFPVSWQMPVESGLSSEDSASSESFASKIKRHSDGTFTSDLSKQMEEEAVRLFIEWLKNGGPSSGAPPPSG`.
+
 ## 2. First alignment
 Codon-aware alignment with MACSE, as in step 4. Frameshifts and internal stops become `NNN`/`X`
 instead of breaking the frame.
@@ -123,7 +149,7 @@ Then apply the table and realign:
 ```
 mkdir -p curated aln1
 python3 ${SCRIPTDIR}/10b_apply_curation.py --cds collect/exendin_cds.fa --curation curation.tsv \
-    --out-prefix curated/exendin 2> curated.log
+    --add-cds rescued/HelCha_Ex3.cds.fa --out-prefix curated/exendin 2> curated.log
 cat curated.log
 macse -prog alignSequences -seq curated/exendin_cds.fa -out_NT aln1/exendin.macse_NT.fa -out_AA aln1/exendin.macse_AA.fa
 macse -prog exportAlignment -align aln1/exendin.macse_NT.fa -codonForFinalStop --- -codonForInternalStop NNN -codonForExternalFS --- -codonForInternalFS NNN -out_NT aln1/exendin.codon.fa -out_AA aln1/exendin.aa.fa

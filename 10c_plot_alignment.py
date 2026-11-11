@@ -6,7 +6,8 @@ problems and misplaced copies can be seen at a glance (10_toga2_exendin_tree.md)
 
   rows       reference sequences (alignment rows not in --tips, e.g. the published
              precursors added with mafft --add) first, in grey italics; then the tips,
-             grouped by TOGA2 label (Ex2, Ex4, ...), in species-tree order within a group
+             grouped by tip name without species and copy letter (Ex2, Ex2_Ex4, GCGL ...),
+             in species-tree order within a group; renamed tips follow their new name
   columns    tip | status | kind (o = ortholog, p = paralogous projection) | aa length |
              the alignment; X (internal stop or unknown) in red; a ruler every 10 columns
   --region   shade alignment columns, e.g. the mature peptide: --region 48-86
@@ -51,6 +52,8 @@ def main():
     ap.add_argument("--dpi", type=int, default=300)
     a = ap.parse_args()
 
+    if not os.path.exists(a.aln) or os.path.getsize(a.aln) == 0:
+        sys.exit(f"[error] {a.aln} is missing or empty: check the steps that write it (10b, MACSE, MAFFT)")
     aln = read_fa(a.aln)
     if len({len(s) for _, s in aln}) != 1:
         sys.exit("[error] sequences differ in length: not an alignment")
@@ -63,8 +66,17 @@ def main():
     if a.curation_log:
         with open(a.curation_log) as fh:
             for r in csv.DictReader(fh, delimiter="\t"):
-                if r["new_name"] not in ("-", r["tip"]) and r["tip"] in info:
-                    info[r["new_name"]] = info[r["tip"]]
+                if r["new_name"] == "-":
+                    continue
+                if r["tip"] in info:
+                    info[r["new_name"]] = dict(info[r["tip"]])
+                elif r["origin"].startswith("added"):          # rebuilt model added with --add-cds
+                    info[r["new_name"]] = dict(tip=r["new_name"], query=r["new_name"].split("_")[0],
+                                               status="-", kind="rebuilt", aa_len=r["aa_len"])
+    for n, r in info.items():
+        # group = the tip name without the species code and copy letter: HelSus_Ex2_Ex4b -> Ex2_Ex4
+        rest = n.split("_", 1)[1] if "_" in n else n
+        r["group"] = re.sub(r"(?<=\d)[b-z]$|p$", "", rest)
     rank = {}
     if a.species_tree:
         tips = {r["query"] for r in info.values()}
@@ -119,9 +131,9 @@ def main():
         else:
             T(margin, y + rh * 0.72, n)
             hx = margin + name_w
-            bad = r["status"] not in ("FI", "I")
+            bad = r["status"] not in ("FI", "I", "-")
             T(hx + 1, y + rh * 0.72, r["status"], **({"fill": "#C00000"} if bad else {})); hx += col_w[0]
-            T(hx + 1, y + rh * 0.72, "p" if r["kind"] == "paralog" else "o"); hx += col_w[1]
+            T(hx + 1, y + rh * 0.72, {"paralog": "p", "rebuilt": "r"}.get(r["kind"], "o")); hx += col_w[1]
             aal = sum(ch not in "-." for ch in s)          # length as aligned (after any trim)
             T(hx + 1, y + rh * 0.72, str(aal), **({"fill": "#C00000"} if not 80 <= aal <= 120 else {}))
         for j, ch in enumerate(s):
