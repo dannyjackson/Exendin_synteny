@@ -1,7 +1,7 @@
 # Exendin gene tree from TOGA2: collection, curated alignment
 **Goal:** one alignment of every exendin gene TOGA2 annotated, across all four TOGA2 runs.
 Every curation decision is recorded in a table, so the alignment can be rebuilt from the
-TOGA2 files at any time. The tree is built from the curated alignment (next section, to come).
+TOGA2 files at any time. The tree is built from the curated alignment (step 4), rooted on GIP, with a topology test of where the exendins come from.
 
 **What goes in:**
 - **Gene set:** every query gene whose *reference* gene is named exendin in that run's
@@ -216,6 +216,86 @@ is clean. `curated/exendin_log.tsv` is the record of every decision and its reas
 Sequences from outside TOGA2 (e.g. a model rebuilt with `lib_rescue_locus.py`) can be added
 with `--add-cds rebuilt.fa`. They are logged as `added`.
 
+## 4. Tree
+Built on the curated **protein** alignment: GIP, GCG and GCGL are too divergent from the
+exendins at the codon level for a codon model to be reliable on the deep nodes. Set `ALN` to
+the alignment you settled on in step 3 (MACSE, the L-INS-i version, or the C-terminally
+trimmed one).
+```
+cd ${WORK}/toga2_exendin_tree
+ALN=aln1/exendin.aa.fa
+IQTREE=$(command -v iqtree3 || command -v iqtree2 || command -v iqtree)
+mkdir -p tree
+python3 ${SCRIPTDIR}/10e_tree_inputs.py --aln ${ALN} --outdir tree 2> tree/tree_inputs.log
+cat tree/tree_inputs.log
+OG=$(cat tree/outgroup.txt); echo ${OG}
+
+$IQTREE -s ${ALN} -m MFP -B 1000 -alrt 1000 -o ${OG} -T AUTO --prefix tree/exendin_aa -redo
+grep "Best-fit model according to" tree/exendin_aa.iqtree
+python3 ${SCRIPTDIR}/4h_draw_tree.py --tree tree/exendin_aa.treefile --groups tree/groups.tsv --outgroup ${OG} \
+    --title "Exendin-family genes from TOGA2, curated; rooted on GIP" --png tree/exendin_aa.png > tree/exendin_aa.svg
+```
+Check `tree_inputs.log` first. It counts the tips in each class: 3 GIP, 3 GCG, 1 chicken
+GCGL, the squamate GCGL, and the exendins. A tip listed under the wrong class has a name
+the script does not recognise. Rename it in `curation.tsv` (`<Code>_GIP`, `<Code>_GCG`,
+`<Code>_GCGL`, anything else = exendin).
+
+**Rooting on GIP.** GIP is the family's single-domain ligand outside the glucagon /
+GCGL / exendin group, so the root falls on its branch. If the three GIP tips are not a
+clade, IQ-TREE says so in `tree/exendin_aa.log` (`grep -i outgroup tree/exendin_aa.log`).
+Then the root is unreliable, and the GIP alignment needs checking first.
+
+### Where do the exendins come from? Topology test
+The ML tree shows one answer. Its support at the deep nodes is often weak with ~90 columns,
+so test the three origins directly. For each hypothesis, find the best tree under that
+constraint, then compare all of them with the unconstrained tree in an AU test:
+
+| Hypothesis | Constraint | Meaning |
+|---|---|---|
+| H1 | exendins + squamate GCGL form a clade, excluding chicken GCGL | the exendins arose by duplicating GCGL within squamates |
+| H2 | exendins sister to all GCGL (chicken included), together excluding GCG | the duplication predates the bird–squamate split |
+| H3 | exendins + GCG form a clade, excluding GCGL | the exendins derive from proglucagon, not GCGL |
+```
+MODEL=$(grep "Best-fit model according to" tree/exendin_aa.iqtree | awk '{print $NF}'); echo ${MODEL}
+for H in H1_squamate_GCGL H2_sister_GCGL H3_GCG; do $IQTREE -s ${ALN} -m ${MODEL} -g tree/${H}.constraint.nwk -o ${OG} -T AUTO --prefix tree/${H} -redo; done
+cat tree/exendin_aa.treefile tree/H1_squamate_GCGL.treefile tree/H2_sister_GCGL.treefile tree/H3_GCG.treefile > tree/candidates.nwk
+$IQTREE -s ${ALN} -m ${MODEL} -z tree/candidates.nwk -n 0 -zb 10000 -au -T AUTO --prefix tree/AUtest -redo
+grep -A8 "USER TREES" tree/AUtest.iqtree
+```
+The trees are listed in that order: 1 = ML, 2 = H1, 3 = H2, 4 = H3. A hypothesis with
+`p-AU < 0.05` is rejected. More than one hypothesis not rejected means this alignment cannot
+choose between them, and that should be reported as such. The answer is not settled by the
+ML tree alone.
+
+### Reading the tree
+- **Support:** node labels are SH-aLRT/UFBoot. Trust a node at ≥ 80 / ≥ 95. Bold tips are
+  *Heloderma*.
+- **Expected backbone:** GIP outside; then proglucagon (chicken, human, HelSus) and GCGL
+  (chicken + squamates) as separate clades; then the exendins. Where the exendins attach is
+  the question tested above.
+- **Within the exendins:**
+  - Orthologs across species (e.g. `HelSus_Ex2_Ex4c` = exendin-4 with `HelCha_Ex3` =
+    exendin-3) should pair.
+  - Copies within one genome that group together are recent tandem duplicates.
+  - The anguid 76–78 aa copies form their own lineage.
+- **Colours** follow the tip names, which are still TOGA2's provisional labels. Name the
+  genes from this tree with step 5. Until then, read groups from the topology, not the
+  colours.
+
+### Codon tree of the exendins (optional)
+For relationships among recent copies (within *Heloderma*, within anguids), the codon
+alignment has more signal. Drop GCG and GIP, then midpoint-root. A GCGL root would assume
+the answer to H1/H2.
+```
+seqkit grep -v -r -p '_GCG$' -p '_GIP$' aln1/exendin.codon.fa > tree/exendin_codon.ingroup.fa
+$IQTREE -s tree/exendin_codon.ingroup.fa -st CODON -m MFP -B 1000 -alrt 1000 -T AUTO --prefix tree/exendin_codon -redo
+python3 ${SCRIPTDIR}/lib_midpoint_root.py tree/exendin_codon.treefile > tree/exendin_codon.rooted.nwk
+python3 ${SCRIPTDIR}/4h_draw_tree.py --tree tree/exendin_codon.rooted.nwk --groups tree/groups.tsv \
+    --title "Exendins and GCGL, codon model, midpoint-rooted" --png tree/exendin_codon.png > tree/exendin_codon.svg
+```
+If you trimmed the protein alignment in step 3, cut the codon alignment to match
+(`seqkit subseq -r 1:<3 x protein columns>`).
+
 ## Outputs
 | File | Content |
 |---|---|
@@ -226,3 +306,7 @@ with `--add-cds rebuilt.fa`. They are logged as `added`.
 | `curated/exendin_{cds,aa}.fa`, `curated/exendin_log.tsv` | curated sequences and the log of what was done to each tip |
 | `aln1/exendin.codon.fa`, `aln1/exendin.aa.fa` | the curated codon and protein alignments, for the tree |
 | `aln*/exendin.aa.{svg,pdf,png}` | the alignment view |
+| `tree/groups.tsv`, `tree/outgroup.txt`, `tree/*.constraint.nwk` | tip classes and colours, the GIP root, constraint trees for H1–H3 |
+| `tree/exendin_aa.{treefile,iqtree,svg,png}` | protein ML tree, rooted on GIP, and its drawing |
+| `tree/AUtest.iqtree` | AU test of the ML tree against H1–H3 |
+| `tree/exendin_codon.*` | optional codon tree of the exendins and GCGL |
