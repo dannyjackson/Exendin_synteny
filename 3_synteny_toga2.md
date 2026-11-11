@@ -10,7 +10,7 @@ Steps 1–2 are the old repo's TOGA2 collection, unchanged; their `tips.tsv` fee
 
 Run the set-up block of `0_Environment_management.md` first.
 ```
-cd ${WORK}/synteny_toga2
+cd ${SCRIPTDIR} && git pull && cd ${WORK}/synteny_toga2
 ```
 
 ## 1. Reference genes annotated as exendin (`3a` = old `4a`, unchanged)
@@ -99,32 +99,6 @@ python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/target_HelSus/q
     --svg interval_HelSus.svg --pdf interval_HelSus.pdf --png interval_HelSus.png \
     --layout interval_HelSus_layout.tsv --genes-out interval_HelSus_genes.tsv 2> interval_HelSus.log
 
-python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/target_HemCap/query_{q}" \
-    --ref-gff ${HEMCAP_GFF} \
-    --species-table ../../species_toga2.tsv --species-tree ${SPTREE} \
-    --svg interval_HemCap.svg --pdf interval_HemCap.pdf --png interval_HemCap.png \
-    --layout interval_HemCap_layout.tsv --genes-out interval_HemCap_genes.tsv 2> interval_HemCap.log
-
-python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/query_{q}/target_AnoCar/output" \
-    --ref-gff ${ANOCAR_GFF} \
-    --species-table ../../species_toga2.tsv --species-tree ${SPTREE} \
-    --svg interval_AnoCar.svg --pdf interval_AnoCar.pdf --png interval_AnoCar.png \
-    --layout interval_AnoCar_layout.tsv --genes-out interval_AnoCar_genes.tsv 2> interval_AnoCar.log
-
-python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/query_{q}/target_CroPor/output" \
-    ${CROPOR_GFF:+--ref-gff ${CROPOR_GFF}} \
-    --species-table ../../species_toga2.tsv --species-tree ${SPTREE} \
-    --svg interval_CroPor.svg --pdf interval_CroPor.pdf --png interval_CroPor.png \
-    --layout interval_CroPor_layout.tsv --genes-out interval_CroPor_genes.tsv 2> interval_CroPor.log
-
-python3 ${SCRIPTDIR}/3c_plot_toga2_synteny.py --dirs "${TOGADIR}/integrated_annotations/query_{q}/integrated" \
-    --ref-gff ${ANOCAR_GFF} ${CROPOR_GFF:+--ref-gff ${CROPOR_GFF}} --ref-gff ${HEMCAP_GFF} --ref-gff ${HELSUS_EVIANN_GFF} \
-    --boundaries SLC4A8,AQP5=LOC_00012326 \
-    --species-table ../../species_toga2.tsv --species-tree ${SPTREE} \
-    --svg interval_integrated.svg --pdf interval_integrated.pdf --png interval_integrated.png \
-    --layout interval_integrated_layout.tsv --genes-out interval_integrated_genes.tsv 2> interval_integrated.log
-
-grep -h "warn" interval_*.log | sort | uniq -c | sort -rn | head -40
 ```
 
 ### 3.3 Check each log before reading its figure
