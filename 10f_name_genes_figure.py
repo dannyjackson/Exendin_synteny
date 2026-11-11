@@ -2,7 +2,9 @@
 """
 Name the exendin-family genes from the tree and their position, and draw one publication
 figure: (A) the SLC4A8-AQP5 interval of every genome with each gene labelled by its new
-name, (B) the gene tree with the same names (10_toga2_exendin_tree.md, step 5).
+name, (B) the gene tree with the same names, and with --aln (C) the protein alignment of
+the exendin genes only (Exendin_anc and the lettered copies; no GCGL, GCG or GIP), in tree
+order, columns that are gaps in every exendin removed (10_toga2_exendin_tree.md, step 5).
 
 Naming rule
   GCGL         every tip in the GCGL clade: the smallest clade holding the --gcgl-tips
@@ -121,6 +123,21 @@ def root_on(root, og):
     return new
 
 
+def prune(n, gone):
+    """Remove leaves in gone; a node left with one child is replaced by it (branch lengths added)."""
+    n.children = [c for c in (prune(c, gone) for c in n.children) if c is not None]
+    if not n.children:
+        return None if (n.name in gone or n.name == "") else n
+    if len(n.children) == 1:
+        c = n.children[0]
+        c.length += n.length
+        c.parent = n.parent
+        return c
+    for c in n.children:
+        c.parent = n
+    return n
+
+
 def support(name):
     m = re.match(r"^([\d.]+)/([\d.]+)$", name or "")
     if m:
@@ -172,12 +189,25 @@ def main():
     ap.add_argument("--names", help="TSV old_tip<TAB>new_name: overrides")
     ap.add_argument("--no-context", action="store_true", help="panel A: leave out the grey non-exendin genes")
     ap.add_argument("--left-mm", type=float, default=105.0, help="width of panel A")
+    ap.add_argument("--drop-species", default="",
+                    help="comma-separated species codes left out of the figure: their row in A, their tips "
+                         "pruned from the tree in B (not re-inferred) and their rows in C, e.g. BarImb")
+    ap.add_argument("--aln", help="protein alignment of the tree (curated tip names): adds panel C, the exendin "
+                                  "genes only, in tree order, under their new names")
+    ap.add_argument("--aln-region", action="append", default=[],
+                    help="START-END[:LABEL] in panel C's columns to shade and label, e.g. 52-90:hormone domain")
     ap.add_argument("--outdir", required=True)
     P.add_args(ap, near_default=0.0, split_default="all")
     a = ap.parse_args()
     os.makedirs(a.outdir, exist_ok=True)
 
     tree = root_on(parse(open(a.tree).read()), [t for t in a.outgroup.split(",") if t])
+    drop = {x for x in a.drop_species.split(",") if x}
+    if drop:
+        gone = [l.name for l in leaves(tree) if l.name.split("_")[0] in drop]
+        tree = prune(tree, set(gone))
+        N.info(f"--drop-species {','.join(sorted(drop))}: {len(gone)} tip(s) pruned from the tree "
+               f"({', '.join(gone)}); the tree is not re-inferred")
     ladderize(tree)
     tips = [l.name for l in leaves(tree)]
     tipnode = {l.name: l for l in leaves(tree)}
@@ -344,7 +374,7 @@ def main():
     N.FIXED_COLOURS.update({"Exendin_anc": COL["Exendin_anc"], "exendin copy": COL["copy"],
                             "GCGL (glucagon-like)": COL["GCGL"]})
     species = {}
-    queries = sorted(set(bnd) | {t.split("_")[0] for t in tips if t in pos})
+    queries = sorted((set(bnd) | {t.split("_")[0] for t in tips if t in pos}) - drop)
     for sp in queries:
         genes = []
         drawn = []
@@ -459,14 +489,90 @@ def main():
         head = re.sub(r'width="([\d.]+)pt"', r'width="\1"', head)
         head = re.sub(r'height="([\d.]+)pt"', r'height="\1"', head)
         return re.sub(r"^<svg ", f'<svg x="{x:.2f}" y="{y:.2f}" ', head, count=1) + "\n" + rest
+    panel_c, ch = "", 0.0
+    if a.aln:
+        keep = [l.name for l in leaves(tree) if klass[l.name] in ("Exendin_anc", "copy")]
+        csvg = alignment_panel(a.aln, keep, rename, {t: COL[klass[t]] for t in keep}, W, fs, a.aln_region)
+        if csvg:
+            _, ch = dims(csvg)
+            panel_c = (f'\n<text x="2" y="{H + fs * 1.1:.2f}" font-size="{fs + 1}" font-weight="bold">C</text>\n'
+                       + nest(csvg, 0, H + fs * 1.4))
+            H += ch + fs * 1.4
     body = (f'<text x="2" y="{fs * 1.1:.2f}" font-size="{fs + 1}" font-weight="bold">A</text>\n'
             f'<text x="{lw + 2:.2f}" y="{fs * 1.1:.2f}" font-size="{fs + 1}" font-weight="bold">B</text>\n'
-            + nest(left, 0, fs * 1.4) + "\n" + nest(right, lw, fs * 1.4))
+            + nest(left, 0, fs * 1.4) + "\n" + nest(right, lw, fs * 1.4) + panel_c)
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W:.1f}pt" height="{H:.1f}pt" viewBox="0 0 {W:.2f} {H:.2f}" '
            f'font-family="{P.FONT}">\n<rect width="100%" height="100%" fill="#fff"/>\n{body}\n</svg>\n')
     P.write(svg, a)
     N.info(f"figure {W / P.PT_PER_MM:.0f} x {H / P.PT_PER_MM:.0f} mm; names in {a.outdir}/names.tsv, "
            f"tree in {a.outdir}/renamed.treefile")
+
+
+CLASSES = [("AILMFWV", "#80A0F0"), ("KR", "#F01505"), ("DE", "#C048C0"), ("NQST", "#15C015"),
+           ("C", "#F08080"), ("G", "#F09048"), ("P", "#C0C000"), ("HY", "#15A4A4")]
+RES_COL = {aa: c for aas, c in CLASSES for aa in aas}
+
+
+def alignment_panel(path, keep, rename, namecol, W, fs, regions):
+    """Panel C: the exendin rows of the alignment, tree order, all-gap columns removed, wrapped to width W."""
+    seqs, name = {}, None
+    for line in open(path):
+        line = line.strip()
+        if line.startswith(">"):
+            name = line[1:].split()[0]; seqs[name] = []
+        elif name:
+            seqs[name].append(line.upper())
+    seqs = {k: "".join(v) for k, v in seqs.items()}
+    rows = [(t, seqs[t]) for t in keep if t in seqs]
+    miss = [t for t in keep if t not in seqs]
+    if miss:
+        N.warn(f"panel C: {len(miss)} exendin tip(s) not in {path}: {', '.join(miss[:5])}")
+    if not rows:
+        N.warn(f"panel C: no exendin tip of the tree is in {path}; panel C left out")
+        return ""
+    L = len(rows[0][1])
+    cols = [j for j in range(L) if any(s[j] not in "-." for _, s in rows)]
+    rows = [(t, "".join(s[j] for j in cols)) for t, s in rows]
+    n = len(cols)
+    names = [rename.get(t, t) for t, _ in rows]
+    name_w = max(P.text_w(x, fs) for x in names) + 6
+    cw, rh = fs * 0.66, fs * 1.2
+    per = max(10, int((W - name_w - 6) // cw) // 10 * 10)
+    blocks = [(b, min(b + per, n)) for b in range(0, n, per)]
+    mono = 'font-family="Menlo, Consolas, DejaVu Sans Mono, monospace"'
+    out, y = [], fs * 0.4
+    for b0, b1 in blocks:
+        top = y + fs * (2.2 if regions else 1.2)
+        for reg in regions:
+            span, _, lab = reg.partition(":")
+            r0, _, r1 = span.partition("-")
+            r0, r1 = max(int(r0) - 1, b0), min(int(r1), b1)
+            if r0 < r1:
+                x = name_w + (r0 - b0) * cw
+                out.append(f'<rect x="{x:.2f}" y="{top - fs * 0.3:.2f}" width="{(r1 - r0) * cw:.2f}" '
+                           f'height="{len(rows) * rh + fs * 0.3:.2f}" fill="none" stroke="#000" stroke-width="0.6"/>')
+                if lab:
+                    out.append(f'<text x="{x:.2f}" y="{top - fs * 1.4:.2f}" font-size="{fs}">{html.escape(lab)}</text>')
+        for c in range(((b0 // 10) + 1) * 10, b1 + 1, 10):
+            out.append(f'<text x="{name_w + (c - b0 - 0.5) * cw:.2f}" y="{top - fs * 0.45:.2f}" font-size="{fs}" '
+                       f'text-anchor="middle">{c}</text>')
+        for i, ((t, sq), nm) in enumerate(zip(rows, names)):
+            yy = top + i * rh
+            out.append(f'<text x="0" y="{yy + rh * 0.72:.2f}" font-size="{fs}" fill="{namecol.get(t, "#000")}">'
+                       f'{html.escape(nm)}</text>')
+            for j, ch in enumerate(sq[b0:b1]):
+                if ch in "-.":
+                    continue
+                x = name_w + j * cw
+                fill = "#E8312F" if ch in "X*" else RES_COL.get(ch, "#DDDDDD")
+                out.append(f'<rect x="{x:.2f}" y="{yy:.2f}" width="{cw:.2f}" height="{rh - 0.5:.2f}" fill="{fill}" '
+                           f'fill-opacity="0.45"/>')
+                out.append(f'<text x="{x + cw / 2:.2f}" y="{yy + rh * 0.74:.2f}" font-size="{fs}" {mono} '
+                           f'text-anchor="middle">{ch}</text>')
+        y = top + len(rows) * rh + fs * 0.8
+    N.info(f"panel C: {len(rows)} exendin rows x {n} columns (of {L}; all-gap columns removed), {len(blocks)} block(s)")
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W:.1f}pt" height="{y:.1f}pt" viewBox="0 0 {W:.2f} {y:.2f}" '
+            f'font-family="{P.FONT}">\n' + "\n".join(out) + "\n</svg>")
 
 
 def _walk(n):
