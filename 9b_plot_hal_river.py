@@ -185,6 +185,9 @@ def main():
     ap.add_argument("--contig-map",
                     help="TSV, no header: code <tab> contig in the TOGA2 table <tab> contig in the HAL. "
                          "Only needed when the two namings cannot be matched automatically")
+    ap.add_argument("--colour-inversions", "--color-inversions", dest="colour_inversions",
+                    action="store_true",
+                    help="draw inverted ribbons in a second colour; off by default, the twist already shows it")
     ap.add_argument("--label-species", default="ref",
                     help="which rows carry gene labels: 'ref' (default, the reference row only), "
                          "'all', or a comma-separated list of codes")
@@ -226,9 +229,10 @@ def main():
         return g["group"] if (a.colour == "family" or g["group"].startswith("exendin")) else None
 
     def ckey(g):
-        """what decides this gene's colour."""
-        if a.gene_colour == "name" and g.get("name"):
-            return split_name(g["name"])[1]
+        """what decides this gene's colour. Colouring by name, only the named genes of the
+        array get a colour (Y, Z, anc, A, B, GCGL); any other gene, family or not, is grey."""
+        if a.gene_colour == "name":
+            return split_name(g["name"])[1] if g.get("name") else None
         return fam_group(g)
 
     famgenes = [(int(g["start"]), int(g["end"]), ckey(g)) for g in rgenes if ckey(g)]
@@ -424,7 +428,7 @@ def main():
             elif a.ribbon_colour == "position":
                 fill, op = viridis(((run["r0"] + run["r1"]) / 2 - lo) / Lreg), 0.7
             else:
-                fill, op = (INV if twist else FWD), 0.6
+                fill, op = ((INV if twist else FWD) if a.colour_inversions else FWD), 0.6
             ribbon(X(a0), X(a1), ya, X(b0), X(b1), yb, fill, op, twist)
             n_rib += 1
             lay.append([f"{qa}->{qb}", run["ba"].contig, run["bb"].contig, run["r0"], run["r1"] + tile_len - 1,
@@ -557,7 +561,9 @@ def main():
              for g in groups]
     items += [(P.OTHER, P.OTHER_FILL, "#777", "", False), (f"{left} / {right}", P.BOUNDARY_FILL[0], P.BOUNDARY_FILL[0], "", True)]
     if a.ribbon_colour == "direction":
-        items += [("collinear", FWD, FWD, "", False), ("inverted", INV, INV, "", False)]
+        items += [("collinear", FWD, FWD, "", False)]
+        if a.colour_inversions:
+            items += [("inverted", INV, INV, "", False)]
     items += [("not intact (TOGA2)" if tgenes else "<50% of gene aligned", "#fff", "#000", "", False)]
     if a.secondary:
         items.append(("duplicated (secondary)", "#999999", "#999999", ' fill-opacity="0.35"', False))

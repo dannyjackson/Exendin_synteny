@@ -135,9 +135,14 @@ river and named in the log (`not aligned to the interval`).
     colour, as is the ribbon running over it. So a paralog can be followed down the tree
     by colour alone, and a row missing one is obvious as a gap in a coloured column. The
     key is the name suffix, so `HelCha_A` and `ElgMul_A` share `A`'s colour by
-    construction. `--gene-colour group` reverts to one colour per family group
-    (exendin-2, exendin-2/4, exendin-4, GCGL, proglucagon), which is the better choice if
-    the nomenclature is still provisional. Every other gene is grey, SLC4A8/AQP5 dark grey.
+    construction. The legend therefore holds exactly the named array and nothing else.
+  - **Only named genes get a colour.** A gene that TOGA2 puts in the family but that
+    `names.tsv` never named is drawn grey like any other gene, which is what keeps the
+    legend to six entries. The trade-off is real: such a gene is a family member the
+    figure no longer distinguishes. If a row loses an exendin you expected to see, it is
+    missing from `names.tsv`, not from the genome — check with `--gene-colour group`,
+    which colours by family group (exendin-2, exendin-2/4, exendin-4, GCGL, proglucagon)
+    and so shows every family gene whether named or not. SLC4A8/AQP5 stay dark grey.
   - **Labels are on the reference row only** (`--label-species ref`, the default): the
     reference carries the nomenclature key and every other row is read off it by colour,
     which keeps the array legible at 180 mm. `--label-species all` labels every row,
@@ -188,7 +193,9 @@ column with the TOGA2 table's.
     genes projected into each genome, hollow below 50% aligned — and says so in the log.
 - **Ribbons** connect each neighbouring pair of genomes: one ribbon per run of the HelSus
   interval that is collinear in both.
-  - Grey = same orientation. Brown, twisting = inverted between the two genomes.
+  - Ribbons are one grey; an inversion between two genomes shows as the ribbon twisting,
+    which is legible without a second colour. `--colour-inversions` colours them brown as
+    well, worth turning on for a figure where inversions are the point.
   - Exendin and GCGL ribbons are in the gene's colour, so the array can be followed down
     the tree.
   - Where ribbons stop, the sequence between them did not align in one of the two
