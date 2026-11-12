@@ -87,21 +87,29 @@ in `sinteractive`, not on the login node.
 ```
 DROP=AnnSte,BarImb,ElgCoe          # left out of the figure entirely
 python3 ${SCRIPTDIR}/9b_plot_hal_river.py --indir hal_lift --drop-species ${DROP} \
-    --species-table ../species.tsv --species-tree ${SPTREE} \
+    --species-table ../species_toga2.tsv --only-listed --species-tree ${SPTREE} \
     --svg hal_river.svg --pdf hal_river.pdf --png hal_river.png \
     --layout hal_river_layout.tsv 2> hal_river.log
 cat hal_river.log
 
 # GENESPACE-style colours: every ribbon coloured by its position along HelSus
 python3 ${SCRIPTDIR}/9b_plot_hal_river.py --indir hal_lift --ribbon-colour position \
-    --drop-species ${DROP} --species-table ../species.tsv --species-tree ${SPTREE} \
+    --drop-species ${DROP} --species-table ../species_toga2.tsv --only-listed \
+    --species-tree ${SPTREE} \
     --svg hal_river_position.svg --pdf hal_river_position.pdf --png hal_river_position.png 2> hal_river_position.log
 
 # with duplicated (secondary) alignments as faded ribbons
 python3 ${SCRIPTDIR}/9b_plot_hal_river.py --indir hal_lift --secondary \
-    --drop-species ${DROP} --species-table ../species.tsv --species-tree ${SPTREE} \
+    --drop-species ${DROP} --species-table ../species_toga2.tsv --only-listed \
+    --species-tree ${SPTREE} \
     --svg hal_river_dups.svg --pdf hal_river_dups.pdf --png hal_river_dups.png 2> hal_river_dups.log
 ```
+`--only-listed` keeps only the genomes of `../species_toga2.tsv` (step 2): where that
+table has a `toga2_query` column, only the rows that have one, so pinned non-TOGA2
+outgroups go too. Genomes left out are named in the log. Without it, every genome of the
+HAL is drawn, which is the right choice for a figure about the alignment rather than the
+annotation — but then most rows have no TOGA2 genes to show.
+
 `--drop-species` takes species codes out of the figure entirely — row, genes and ribbons
 — and the ribbons then join the genomes that remain, so neighbouring rows are the
 neighbours you see. Nothing is re-lifted: drop and re-draw, no need to re-run 9a. Every
@@ -189,8 +197,14 @@ column with the TOGA2 table's.
   - Hollow = a TOGA2 status that is not intact (`UL`, `M`, `L`).
   - A missing arrow now means **that genome has no TOGA2 gene there**, which is a real
     absence in the annotation rather than a failure to align.
-  - If 9a was run without the TOGA2 tables, 9b falls back to the old behaviour — HelSus's
-    genes projected into each genome, hollow below 50% aligned — and says so in the log.
+  - **Every arrow is a TOGA2 prediction.** A row whose annotation cannot be matched to
+    the contig its bar was built from is drawn with **no genes**, and warned about —
+    it is never filled in with the reference's genes projected across, which would put
+    arrows where that genome has no prediction. The bar and its ribbons are still correct;
+    only the arrows are missing, and the contig warning says what to fix.
+  - The one exception: if 9a was run without `--toga2-genes` there is no
+    `target_genes.tsv` at all, and 9b falls back wholesale to the old behaviour — HelSus's
+    genes projected into each genome, hollow below 50% aligned — saying so in the log.
 - **Ribbons** connect each neighbouring pair of genomes: one ribbon per run of the HelSus
   interval that is collinear in both.
   - Ribbons are one grey; an inversion between two genomes shows as the ribbon twisting,

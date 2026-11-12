@@ -174,6 +174,9 @@ def main():
     ap.add_argument("--bar-gap-kb", type=float, default=20.0, help="space between two contigs of one genome")
     ap.add_argument("--width-mm", type=float, default=180.0)
     ap.add_argument("--font-pt", type=float, default=7.0)
+    ap.add_argument("--only-listed", action="store_true",
+                    help="draw only the genomes in --species-table; with a toga2_query column, only the "
+                         "rows that have one. Use with ../species_toga2.tsv to restrict to the TOGA2 set")
     ap.add_argument("--drop-species", default="",
                     help="comma-separated codes to leave out of the figure entirely, e.g. AnnSte,BarImb,ElgCoe")
     ap.add_argument("--gene-labels", choices=("named", "all", "none"), default="named",
@@ -220,7 +223,16 @@ def main():
                "(re-run 9a to draw each genome's own TOGA2 annotation)")
     targets = read_tsv(os.path.join(a.indir, "targets.tsv"))
     drop = {c.strip() for c in a.drop_species.split(",") if c.strip()}
-    names = {r["code"]: r["species"] for r in N.read_species_table(a.species_table)} if a.species_table else {}
+    sprows = N.read_species_table(a.species_table) if a.species_table else []
+    names = {r["code"]: r["species"] for r in sprows}
+    listed = None
+    if a.only_listed:
+        if not sprows:
+            sys.exit("[error] --only-listed needs --species-table")
+        tq = [r for r in sprows if (r.get("toga2_query") or "").strip()]
+        listed = {r["code"] for r in (tq or sprows)}
+        N.info(f"--only-listed: {len(listed)} genome(s) from {os.path.basename(a.species_table)}"
+               + (f" with a toga2_query" if tq else ""))
     pad, maxgap, brk = a.pad_kb * 1000, a.max_gap_kb * 1000, a.break_kb * 1000
 
     def fam_group(g):
@@ -272,7 +284,12 @@ def main():
 
     # ---- bars per genome ----
     bars_by, unaligned = {}, []
-    codes = [refcode] + [t["code"] for t in targets if t["code"] not in drop]
+    codes = [refcode] + [t["code"] for t in targets
+                         if t["code"] not in drop and (listed is None or t["code"] in listed)]
+    if listed is not None:
+        off = [t["code"] for t in targets if t["code"] not in drop and t["code"] not in listed]
+        if off:
+            N.info(f"not in the species table, left out: {', '.join(sorted(off))}")
     if drop:
         N.info(f"left out of the figure: {', '.join(sorted(drop))}")
         missing = drop - {t["code"] for t in targets}
@@ -366,7 +383,7 @@ def main():
     ys = {q: top + k * row_step for k, q in enumerate(order)}
 
     out_rib, out_bar, out_txt, lay = [], [], [], []
-    foreign, projected = defaultdict(int), defaultdict(int)
+    foreign, projected, no_ann = defaultdict(int), defaultdict(int), set()
     sel = a.label_species.strip().lower()
     label_on = set(codes) if sel == "all" else ({refcode} if sel in ("ref", "") else
                                                 {c.strip() for c in a.label_species.split(",") if c.strip()})
@@ -471,9 +488,11 @@ def main():
             own = genes_on(q, b.contig)
             if q == refcode:
                 gl = [(int(g["start"]), int(g["end"]), g, 1.0, "own") for g in rgenes]
-            elif own:                                    # the genome's own TOGA2 annotation
+            elif own or tgenes:          # the genome's own TOGA2 annotation, or nothing at all
                 gl = [(int(g["start"]), int(g["end"]), g, 1.0, "own") for g in own]
-            else:                                        # fallback: the reference's genes, projected
+                if not own:
+                    no_ann.add(q)
+            else:                        # no target_genes.tsv at all: the reference's genes, projected
                 gl = [(int(g["start"]), int(g["end"]), ginfo[g["gene_id"]], float(g["frac_lifted"]), g["hit"])
                       for g in glift if g["code"] == q and g["contig"] == b.contig and g["gene_id"] in ginfo]
             slots = []
@@ -600,6 +619,10 @@ def main():
                f"are on {', '.join(gctgs[:6])}{' ...' if len(gctgs) > 6 else ''}. The bars come from "
                f"halLiftover, so the two namings must line up. Add a line to --contig-map: "
                f"{code}\t{gctgs[0] if gctgs else '<TOGA2 contig>'}\t{bad[0]}")
+    if no_ann:
+        N.warn("drawn with no genes, because no TOGA2 annotation matched the contig(s) drawn for them: "
+               + ", ".join(sorted(no_ann)) + ". See the contig warnings above; the bars and ribbons "
+               "are still correct, only the gene arrows are missing.")
     if projected:
         N.warn("these rows show the REFERENCE's genes projected into them, not their own TOGA2 "
                "annotation: " + ", ".join(f"{q} ({n})" for q, n in sorted(projected.items()))
