@@ -129,8 +129,15 @@ river and named in the log (`not aligned to the interval`).
 - **Genes on the bars** = **each genome's own TOGA2 annotation**, in its own coordinates.
   A row can therefore have more or fewer genes than HelSus, which is the point: a
   genome-specific paralog shows up where a projection of HelSus's genes could never put it.
-  - Colours: exendins and GCGL keep their usual colours, every other gene is grey, and
-    SLC4A8/AQP5 are dark grey.
+  - **Colours: one per gene of the reference array** (`--gene-colour name`, the default).
+    Each HelSus exendin gets its own colour — `Z`, `Y`, `anc`, `A`, `B`, `GCGL`, in order
+    along the chromosome — and an orthologue in any other row is drawn in that same
+    colour, as is the ribbon running over it. So a paralog can be followed down the tree
+    by colour alone, and a row missing one is obvious as a gap in a coloured column. The
+    key is the name suffix, so `HelCha_A` and `ElgMul_A` share `A`'s colour by
+    construction. `--gene-colour group` reverts to one colour per family group
+    (exendin-2, exendin-2/4, exendin-4, GCGL, proglucagon), which is the better choice if
+    the nomenclature is still provisional. Every other gene is grey, SLC4A8/AQP5 dark grey.
   - **Labels** are the step-5 names with the species prefix dropped, since the row already
     says the species: `anc`, `A`, `B`, `Z`, `Y`, `GCGL`. `--label-style full` restores
     `HelCha_Exendin_anc`. `--gene-labels all` also labels the grey genes by symbol;
@@ -138,17 +145,32 @@ river and named in the log (`not aligned to the interval`).
     row of labels.
   - **A label that keeps a species prefix on another species' row is a bug, not a style.**
     Shortening only strips the row's own code, so `HelSus_B` on the *H. charlesbogerti*
-    row stays long and is counted in a warning. Two causes, both reported in the log:
-    - **`these rows show the REFERENCE's genes projected into them`** — the row fell back
-      to `genes_lifted.tsv` because no gene in `target_genes.tsv` sat on the contig the
-      bar is built from. Almost always the contig names disagree: the bars come from
-      `halLiftover`, so `target_genes.tsv` must use the **HAL's** sequence names, not the
-      TOGA2 query assembly's. Check with
-      `cut -f1,8 hal_lift/target_genes.tsv | sort -u` against
-      `cut -f2,6 hal_lift/tile_hits.tsv | sort -u`; if they differ, rename the contigs in
-      the TOGA2 table (or re-run 3c against the HAL's naming) and re-run 9a.
-    - **`gene names belonging to another species`** — `names.tsv` rows were matched onto
-      the wrong species in 9a. Compare its `species` column with the TOGA2 table's.
+    row stays long, and is counted in a warning rather than disguised as that genome's
+    own gene B.
+
+### When a row shows `HelSus_*` labels
+The bars are built from `halLiftover` output, so they are named with the **HAL's**
+sequence names, while `target_genes.tsv` carries the **TOGA2 query assembly's**. When the
+two namings disagree the row has no annotation to draw and silently falls back to the
+reference's genes projected into it — which is what `HelSus_A` on a *Heloderma
+charlesbogerti* bar means.
+
+9b now matches the two loosely first: case, a leading species code, a `chr`/`scaffold`/
+`SUPER`/`ctg` prefix and a trailing `.1` version are all ignored, so `chr5` ↔ `HelCha_chr5`
+↔ `SUPER_5` ↔ `NC_000005.1` resolve by themselves. Only genuinely unrelated namings are
+left, and each is reported with both name sets and the exact line to add:
+```
+[warn] HelCha: no annotation matched the drawn contig(s) chr5; its TOGA2 genes are on
+       JAKMXS010000004.1 ... Add a line to --contig-map: HelCha<TAB>JAKMXS010000004.1<TAB>chr5
+```
+```
+# contigs.tsv -- code, contig in the TOGA2 table, contig in the HAL
+printf 'HelCha\tJAKMXS010000004.1\tchr5\n' > contigs.tsv
+python3 ${SCRIPTDIR}/9b_plot_hal_river.py --indir hal_lift --contig-map contigs.tsv ...
+```
+The second warning, **`gene names belonging to another species`**, is a different fault:
+`names.tsv` rows were matched onto the wrong species back in 9a. Compare its `species`
+column with the TOGA2 table's.
   - Hollow = a TOGA2 status that is not intact (`UL`, `M`, `L`).
   - A missing arrow now means **that genome has no TOGA2 gene there**, which is a real
     absence in the annotation rather than a failure to align.

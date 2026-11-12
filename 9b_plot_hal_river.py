@@ -27,7 +27,7 @@ Usage
       --species-tree ${SPTREE} --svg hal_river.svg --pdf hal_river.pdf --png hal_river.png \
       --layout hal_river_layout.tsv 2> hal_river.log
 """
-import argparse, csv, html, os, sys
+import argparse, csv, html, os, re, sys
 from collections import defaultdict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +39,34 @@ S = P.S
 VIRIDIS = [(0.0, (68, 1, 84)), (0.25, (59, 82, 139)), (0.5, (33, 145, 140)), (0.75, (94, 201, 98)), (1.0, (253, 231, 37))]
 FWD, INV = "#BDBDBD", "#A6611A"
 SHORT_NAME = {"exendin_anc": "anc", "gcgl": "GCGL"}
+
+
+def norm_ctg(c):
+    """loose contig key, so chr5 / Chr5 / HelCha_chr5 / NC_000005.1 / SUPER_5 can be matched."""
+    c = re.sub(r"\.\d+$", "", (c or "").strip().lower())
+    c = re.sub(r"^[a-z]{3}[a-z]{3}[_-]", "", c)                      # a leading species code
+    c = re.sub(r"^(chr|chromosome|scaffold|scf|super|seq|lg|ctg|contig)[_-]?", "", c)
+    return c.lstrip("0") or c
+
+
+def resolve_ctgs(code, bar_ctgs, gene_ctgs, manual):
+    """bar contig -> the gene contig holding that genome's annotation for it."""
+    out, left = {}, set(gene_ctgs)
+    for c in bar_ctgs:
+        if (code, c) in manual:
+            out[c] = manual[(code, c)]; left.discard(out[c]); continue
+        if c in left:
+            out[c] = c; left.discard(c); continue
+        hits = [g for g in left if norm_ctg(g) == norm_ctg(c)]
+        if len(hits) == 1:
+            out[c] = hits[0]; left.discard(hits[0])
+    return out
+
+
+def split_name(name):
+    """'HelCha_Exendin_anc' -> ('HelCha', 'anc'); the suffix is shared between orthologues."""
+    code, _, stem = (name or "").partition("_")
+    return code, SHORT_NAME.get(stem.lower(), stem)
 
 
 def short_label(name, code):
@@ -150,6 +178,13 @@ def main():
                     help="comma-separated codes to leave out of the figure entirely, e.g. AnnSte,BarImb,ElgCoe")
     ap.add_argument("--gene-labels", choices=("named", "all", "none"), default="named",
                     help="named (default): only genes carrying a step-5 name; all: every gene with a name or symbol")
+    ap.add_argument("--gene-colour", "--gene-color", dest="gene_colour", choices=("name", "group"),
+                    default="name",
+                    help="name (default): one colour per gene of the reference array (Z, Y, anc, A, B, GCGL), "
+                         "shared with that gene's orthologues in every row; group: one colour per family group")
+    ap.add_argument("--contig-map",
+                    help="TSV, no header: code <tab> contig in the TOGA2 table <tab> contig in the HAL. "
+                         "Only needed when the two namings cannot be matched automatically")
     ap.add_argument("--label-style", choices=("short", "full"), default="short",
                     help="short (default): drop the species prefix, so HelCha_Exendin_anc is 'anc'; full: the whole name")
     ap.add_argument("--label-tiers", type=int, default=2)
@@ -187,10 +222,20 @@ def main():
             return None
         return g["group"] if (a.colour == "family" or g["group"].startswith("exendin")) else None
 
-    famgenes = [(int(g["start"]), int(g["end"]), fam_group(g)) for g in rgenes if fam_group(g)]
-    allg = {f[2] for f in famgenes} | {fam_group(g) for gs in tgenes.values() for g in gs
-                                       if g["code"] not in drop and fam_group(g)}
-    groups = sorted(allg, key=lambda g: (not g.startswith("GCGL"), not g.startswith("exendin-"), g))
+    def ckey(g):
+        """what decides this gene's colour."""
+        if a.gene_colour == "name" and g.get("name"):
+            return split_name(g["name"])[1]
+        return fam_group(g)
+
+    famgenes = [(int(g["start"]), int(g["end"]), ckey(g)) for g in rgenes if ckey(g)]
+    allg = {f[2] for f in famgenes} | {ckey(g) for gs in tgenes.values() for g in gs
+                                       if g["code"] not in drop and ckey(g)}
+    if a.gene_colour == "name":                      # order the palette along the reference
+        at = {ckey(g): int(g["start"]) for g in rgenes if ckey(g)}
+        groups = sorted(allg, key=lambda g: (at.get(g, 1 << 62), g))
+    else:
+        groups = sorted(allg, key=lambda g: (not g.startswith("GCGL"), not g.startswith("exendin-"), g))
     cmap = N.colour_map(groups)
 
     def tile_group(rs, re_):
@@ -226,6 +271,22 @@ def main():
         missing = drop - {t["code"] for t in targets}
         if missing:
             N.warn(f"--drop-species names {', '.join(sorted(missing))}, which is not in targets.tsv")
+    cmanual = {}
+    if a.contig_map:
+        for r in open(a.contig_map):
+            f = r.rstrip("\n").split("\t")
+            if len(f) >= 3 and not r.startswith("#"):
+                cmanual[(f[0], f[2])] = f[1]
+        N.info(f"{len(cmanual)} contig alias(es) from {os.path.basename(a.contig_map)}")
+    alias, ctg_warn = {}, []
+
+    def genes_on(code, c):
+        gs = tgenes.get(code, [])
+        if not gs:
+            return []
+        want = alias.get(code, {}).get(c)
+        return [g for g in gs if g["contig"] == want] if want else []
+
     for code in codes:
         p = pos.get(code, {})
         if not p:
@@ -239,13 +300,17 @@ def main():
         left_out = [c for c in bp if c not in ctgs]
         if left_out:
             N.info(f"{code}: {len(left_out)} contig(s) with {sum(bp[c] for c in left_out) / 1000:.1f} kb aligned not drawn")
+        gctgs = {g["contig"] for g in tgenes.get(code, [])}
+        alias[code] = resolve_ctgs(code, ctgs, gctgs, cmanual)
+        if gctgs and len(alias[code]) < len(ctgs):
+            ctg_warn.append((code, [c for c in ctgs if c not in alias[code]], sorted(gctgs)))
         bars = []
         for c in ctgs:
             recs = [(r, v) for r, v in p.items() if v[0] == c]
             minus = sum(v[2] - v[1] for _, v in recs if v[3] == "-")
             flip = minus * 2 > sum(v[2] - v[1] for _, v in recs)
             ivals = [(v[1], v[2]) for _, v in recs]
-            own = [g for g in tgenes.get(code, []) if g["contig"] == c]
+            own = genes_on(code, c)
             ivals += [(int(g["start"]), int(g["end"])) for g in (own if own else
                       [h for h in glift if h["code"] == code and h["contig"] == c])]
             b = Bar(c, flip, ivals, pad, maxgap, brk)
@@ -389,7 +454,7 @@ def main():
                     out_txt.append(f'<text x="{cx:.2f}" y="{y + hh + fs * 0.75:.2f}" font-size="{fs * 0.8:.2f}" '
                                    f'text-anchor="middle" fill="#555">{html.escape(fmt_dist(skipped))}</text>')
             lay.append([q, b.contig, "", "", "", "flipped" if b.flip else "as is", f"{X(b.L):.1f}-{X(b.R):.1f}"])
-            own = [g for g in tgenes.get(q, []) if g["contig"] == b.contig]
+            own = genes_on(q, b.contig)
             if q == refcode:
                 gl = [(int(g["start"]), int(g["end"]), g, 1.0, "own") for g in rgenes]
             elif own:                                    # the genome's own TOGA2 annotation
@@ -398,7 +463,7 @@ def main():
                 gl = [(int(g["start"]), int(g["end"]), ginfo[g["gene_id"]], float(g["frac_lifted"]), g["hit"])
                       for g in glift if g["code"] == q and g["contig"] == b.contig and g["gene_id"] in ginfo]
             slots = []
-            for s_, e_, g, frac, hit in sorted(gl, key=lambda t: fam_group(t[2]) is not None):
+            for s_, e_, g, frac, hit in sorted(gl, key=lambda t: ckey(t[2]) is not None):
                 gx0, gx1 = sorted((X(b.x(s_)), X(b.x(e_))))
                 st = g["strand"]
                 if hit != "own":                         # projected: orient by the lift, not the reference
@@ -407,7 +472,7 @@ def main():
                         st = P.flipstrand(st)
                 if b.flip:
                     st = P.flipstrand(st)
-                grp = fam_group(g)
+                grp = ckey(g)
                 if g["kind"] == "boundary":
                     fill, edge = P.BOUNDARY_FILL[0], P.BOUNDARY_FILL[0]
                 elif grp:
@@ -478,7 +543,8 @@ def main():
     out_txt.append(f'<line x1="{x0p:.2f}" x2="{x0p + sb * sc:.2f}" y1="{y:.2f}" y2="{y:.2f}" stroke="#000" stroke-width="0.8"/>')
     T(x0p + sb * sc + 3, y + fs * 0.35, P.fmt_kb(sb))
     lx, ly = x0p + sb * sc + 3 + P.text_w(P.fmt_kb(sb), fs) + 14, y
-    items = [(P.legend_name(g), cmap[g], cmap[g], "", False) for g in groups]
+    items = [(g if a.gene_colour == "name" else P.legend_name(g), cmap[g], cmap[g], "", False)
+             for g in groups]
     items += [(P.OTHER, P.OTHER_FILL, "#777", "", False), (f"{left} / {right}", P.BOUNDARY_FILL[0], P.BOUNDARY_FILL[0], "", True)]
     if a.ribbon_colour == "direction":
         items += [("collinear", FWD, FWD, "", False), ("inverted", INV, INV, "", False)]
@@ -513,13 +579,15 @@ def main():
             fh.write("rows\tcontig_a\tcontig_b\thelsus_start\thelsus_end\ttype\tgroup\n")
             for r in lay:
                 fh.write("\t".join(map(str, r)) + "\n")
+    for code, bad, gctgs in ctg_warn:
+        N.warn(f"{code}: no annotation matched the drawn contig(s) {', '.join(bad)}; its TOGA2 genes "
+               f"are on {', '.join(gctgs[:6])}{' ...' if len(gctgs) > 6 else ''}. The bars come from "
+               f"halLiftover, so the two namings must line up. Add a line to --contig-map: "
+               f"{code}\t{gctgs[0] if gctgs else '<TOGA2 contig>'}\t{bad[0]}")
     if projected:
         N.warn("these rows show the REFERENCE's genes projected into them, not their own TOGA2 "
                "annotation: " + ", ".join(f"{q} ({n})" for q, n in sorted(projected.items()))
-               + ". The usual cause is a contig-name mismatch: the contig names in "
-               "target_genes.tsv must be the names the HAL uses, since the bars are built from "
-               "halLiftover output. Compare `cut -f1,8 hal_lift/target_genes.tsv | sort -u` with "
-               "`cut -f2,6 hal_lift/tile_hits.tsv | sort -u`.")
+               + ". Rows with no TOGA2 rows at all are listed by 9a; the rest are contig-naming, above.")
     if foreign:
         N.warn("gene names belonging to another species, left unshortened so they stay visible: "
                + ", ".join(f"{q} ({n})" for q, n in sorted(foreign.items()))
