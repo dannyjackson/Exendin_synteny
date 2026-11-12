@@ -38,6 +38,18 @@ import lib_pub_synteny as P  # noqa: E402
 S = P.S
 VIRIDIS = [(0.0, (68, 1, 84)), (0.25, (59, 82, 139)), (0.5, (33, 145, 140)), (0.75, (94, 201, 98)), (1.0, (253, 231, 37))]
 FWD, INV = "#BDBDBD", "#A6611A"
+SHORT_NAME = {"exendin_anc": "anc", "gcgl": "GCGL"}
+
+
+def short_label(name, code):
+    """'HelCha_Exendin_anc' on the HelCha row -> 'anc'. A name belonging to another
+    species is left in full, so a mismatch stays visible instead of being disguised."""
+    if not name:
+        return "", False
+    if not name.startswith(code + "_"):
+        return name, True                       # not this genome's name: flag it
+    stem = name[len(code) + 1:]
+    return SHORT_NAME.get(stem.lower(), stem), False
 
 
 def viridis(x):
@@ -138,6 +150,8 @@ def main():
                     help="comma-separated codes to leave out of the figure entirely, e.g. AnnSte,BarImb,ElgCoe")
     ap.add_argument("--gene-labels", choices=("named", "all", "none"), default="named",
                     help="named (default): only genes carrying a step-5 name; all: every gene with a name or symbol")
+    ap.add_argument("--label-style", choices=("short", "full"), default="short",
+                    help="short (default): drop the species prefix, so HelCha_Exendin_anc is 'anc'; full: the whole name")
     ap.add_argument("--label-tiers", type=int, default=2)
     ap.add_argument("--full-names", action="store_true")
     ap.add_argument("--svg"); ap.add_argument("--pdf"); ap.add_argument("--png")
@@ -280,6 +294,7 @@ def main():
     ys = {q: top + k * row_step for k, q in enumerate(order)}
 
     out_rib, out_bar, out_txt, lay = [], [], [], []
+    foreign, projected = defaultdict(int), defaultdict(int)
 
     def T(x, yy, s, **kw):
         out_txt.append(f'<text x="{x:.2f}" y="{yy:.2f}" font-size="{fs}"'
@@ -409,8 +424,16 @@ def main():
                 out_bar.append(f'<polygon points="{pts}" fill="{"#fff" if hollow else fill}" stroke="{edge}" '
                                f'stroke-width="{0.7 if hollow or dash else 0.35}"{dash}><title>{tip}</title></polygon>')
                 lab = g.get("name") or ""
+                if lab and a.label_style == "short":
+                    lab, wrong = short_label(lab, q)
+                    if wrong:
+                        foreign[q] += 1
+                elif lab and not lab.startswith(q + "_"):
+                    foreign[q] += 1
                 if a.gene_labels == "all" and not lab and g["kind"] != "boundary":
                     lab = g["symbol"]
+                if hit != "own":
+                    projected[q] += 1
                 if lab and a.gene_labels != "none":
                     slots.append(((a0 + a1) / 2, P.text_w(lab, fs * 0.85), lab))
             for (cx, w, lab), tier in zip(slots, S.place_labels([(c, w) for c, w, _ in slots],
@@ -490,6 +513,17 @@ def main():
             fh.write("rows\tcontig_a\tcontig_b\thelsus_start\thelsus_end\ttype\tgroup\n")
             for r in lay:
                 fh.write("\t".join(map(str, r)) + "\n")
+    if projected:
+        N.warn("these rows show the REFERENCE's genes projected into them, not their own TOGA2 "
+               "annotation: " + ", ".join(f"{q} ({n})" for q, n in sorted(projected.items()))
+               + ". The usual cause is a contig-name mismatch: the contig names in "
+               "target_genes.tsv must be the names the HAL uses, since the bars are built from "
+               "halLiftover output. Compare `cut -f1,8 hal_lift/target_genes.tsv | sort -u` with "
+               "`cut -f2,6 hal_lift/tile_hits.tsv | sort -u`.")
+    if foreign:
+        N.warn("gene names belonging to another species, left unshortened so they stay visible: "
+               + ", ".join(f"{q} ({n})" for q, n in sorted(foreign.items()))
+               + ". Check the `species` column of names.tsv against the TOGA2 table's.")
     N.info(f"{len(order)} genomes, {sum(len(v) for v in bars_by.values())} bars, {n_rib} ribbons, "
            f"{W / P.PT_PER_MM:.0f} x {H / P.PT_PER_MM:.0f} mm, text {fs:g} pt")
 

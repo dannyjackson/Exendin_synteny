@@ -131,10 +131,24 @@ river and named in the log (`not aligned to the interval`).
   genome-specific paralog shows up where a projection of HelSus's genes could never put it.
   - Colours: exendins and GCGL keep their usual colours, every other gene is grey, and
     SLC4A8/AQP5 are dark grey.
-  - **Labels** are the step-5 names (`HelSus_Exendin_anc`, `HelCha_A`, `DopGra_Z` …), so
-    the same gene carries the same name here, in the step-5 figure and in the tree.
-    `--gene-labels all` also labels the grey genes by symbol; `--gene-labels none` turns
-    labels off; `--label-tiers 3` gives crowded rows another row of labels.
+  - **Labels** are the step-5 names with the species prefix dropped, since the row already
+    says the species: `anc`, `A`, `B`, `Z`, `Y`, `GCGL`. `--label-style full` restores
+    `HelCha_Exendin_anc`. `--gene-labels all` also labels the grey genes by symbol;
+    `--gene-labels none` turns labels off; `--label-tiers 3` gives crowded rows another
+    row of labels.
+  - **A label that keeps a species prefix on another species' row is a bug, not a style.**
+    Shortening only strips the row's own code, so `HelSus_B` on the *H. charlesbogerti*
+    row stays long and is counted in a warning. Two causes, both reported in the log:
+    - **`these rows show the REFERENCE's genes projected into them`** — the row fell back
+      to `genes_lifted.tsv` because no gene in `target_genes.tsv` sat on the contig the
+      bar is built from. Almost always the contig names disagree: the bars come from
+      `halLiftover`, so `target_genes.tsv` must use the **HAL's** sequence names, not the
+      TOGA2 query assembly's. Check with
+      `cut -f1,8 hal_lift/target_genes.tsv | sort -u` against
+      `cut -f2,6 hal_lift/tile_hits.tsv | sort -u`; if they differ, rename the contigs in
+      the TOGA2 table (or re-run 3c against the HAL's naming) and re-run 9a.
+    - **`gene names belonging to another species`** — `names.tsv` rows were matched onto
+      the wrong species in 9a. Compare its `species` column with the TOGA2 table's.
   - Hollow = a TOGA2 status that is not intact (`UL`, `M`, `L`).
   - A missing arrow now means **that genome has no TOGA2 gene there**, which is a real
     absence in the annotation rather than a failure to align.
