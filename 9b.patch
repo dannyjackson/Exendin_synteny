@@ -1,0 +1,203 @@
+--- 9b.orig	2026-11-12 14:14:10.625979351 -0500
++++ 9b_plot_hal_river.py	2026-11-12 14:18:42.669887241 -0500
+@@ -27,7 +27,7 @@
+       --species-tree ${SPTREE} --svg hal_river.svg --pdf hal_river.pdf --png hal_river.png \
+       --layout hal_river_layout.tsv 2> hal_river.log
+ """
+-import argparse, csv, html, os, re, sys
++import argparse, bisect, csv, html, os, re, sys
+ from collections import defaultdict
+ 
+ HERE = os.path.dirname(os.path.abspath(__file__))
+@@ -41,6 +41,11 @@
+ SHORT_NAME = {"exendin_anc": "anc", "gcgl": "GCGL"}
+ 
+ 
++def canon_ctg(c):
++    """same name, different separators: TOGA2 writes NC_086153.1 as NC_086153__1, Cactus as NC_086153_1."""
++    return re.sub(r"[._]+", "_", (c or "").strip().lower())
++
++
+ def norm_ctg(c):
+     """loose contig key, so chr5 / Chr5 / HelCha_chr5 / NC_000005.1 / SUPER_5 can be matched."""
+     c = re.sub(r"\.\d+$", "", (c or "").strip().lower())
+@@ -57,12 +62,59 @@
+             out[c] = manual[(code, c)]; left.discard(out[c]); continue
+         if c in left:
+             out[c] = c; left.discard(c); continue
++        hits = [g for g in left if canon_ctg(g) == canon_ctg(c)]     # NC_086153__1 = NC_086153_1 = NC_086153.1
++        if len(hits) == 1:
++            out[c] = hits[0]; left.discard(hits[0]); continue
+         hits = [g for g in left if norm_ctg(g) == norm_ctg(c)]
+         if len(hits) == 1:
+             out[c] = hits[0]; left.discard(hits[0])
+     return out
+ 
+ 
++def lis(pts):
++    """longest run of anchors whose HAL positions rise with their TOGA2 positions."""
++    if not pts:
++        return []
++    best, prev = [1] * len(pts), [-1] * len(pts)
++    for i in range(len(pts)):
++        for j in range(i):
++            if pts[j][0] < pts[i][0] and pts[j][1] < pts[i][1] and best[j] + 1 > best[i]:
++                best[i], prev[i] = best[j] + 1, j
++    i, out = max(range(len(pts)), key=best.__getitem__), []
++    while i >= 0:
++        out.append(pts[i]); i = prev[i]
++    return out[::-1]
++
++
++def fit_anchors(anch, tol):
++    """anch: [(toga2 mid, hal mid, sign)] -> (sign, mapper toga2 coord -> HAL coord, anchors kept,
++    median offset). Orientation by majority; anchors further than tol from the median offset
++    (a paralog anchored to the wrong copy) and out-of-order anchors are dropped; between the
++    kept anchors the map is piecewise linear, beyond them it continues at the end anchor."""
++    sign = 1 if sum(x[2] for x in anch) >= 0 else -1
++    offs = sorted(h - sign * t for t, h, sg in anch if sg == sign)
++    off = offs[len(offs) // 2]
++    pts = {}
++    for t, h, sg in anch:
++        if sg == sign and abs(h - sign * t - off) <= tol:
++            pts.setdefault(t, []).append(h)
++    pts = sorted((t, sorted(hs)[len(hs) // 2]) for t, hs in pts.items())
++    keep = lis([(t, sign * h) for t, h in pts])
++    keep = [(t, sign * u) for t, u in keep]
++    ts = [t for t, _ in keep]
++
++    def f(v):
++        if len(keep) < 2:
++            return sign * v + off
++        i = bisect.bisect_left(ts, v)
++        if i <= 0 or i >= len(keep):
++            t, h = keep[0] if i <= 0 else keep[-1]
++            return h + sign * (v - t)
++        (t0, h0), (t1, h1) = keep[i - 1], keep[i]
++        return h0 + (h1 - h0) * (v - t0) / (t1 - t0)
++    return sign, f, keep, off
++
++
+ def split_name(name):
+     """'HelCha_Exendin_anc' -> ('HelCha', 'anc'); the suffix is shared between orthologues."""
+     code, _, stem = (name or "").partition("_")
+@@ -185,6 +237,15 @@
+                     default="name",
+                     help="name (default): one colour per gene of the reference array (Z, Y, anc, A, B, GCGL), "
+                          "shared with that gene's orthologues in every row; group: one colour per family group")
++    ap.add_argument("--placement", choices=("auto", "anchors", "names"), default="auto",
++                    help="how each genome's TOGA2 genes are put on its HAL bars. anchors: through the HelSus "
++                         "genes that TOGA2 projected AND halLiftover lifted (works across contig namings and "
++                         "assembly versions); names: by contig name only (the old behaviour); auto (default): "
++                         "anchors where there are any, else names")
++    ap.add_argument("--anchor-tol-kb", type=float, default=50.0,
++                    help="anchors further than this from a contig's median offset are ignored")
++    ap.add_argument("--min-anchors", type=int, default=2,
++                    help="fewest consistent anchors needed to place a TOGA2 contig on a HAL bar")
+     ap.add_argument("--contig-map",
+                     help="TSV, no header: code <tab> contig in the TOGA2 table <tab> contig in the HAL. "
+                          "Only needed when the two namings cannot be matched automatically")
+@@ -304,12 +365,63 @@
+         N.info(f"{len(cmanual)} contig alias(es) from {os.path.basename(a.contig_map)}")
+     alias, ctg_warn = {}, []
+ 
+-    def genes_on(code, c):
++    # anchors: a TOGA2 gene projected from HelSus gene X, and X lifted by halLiftover onto a HAL
++    # contig, are two placements of one locus. Their positions tie the TOGA2 assembly's
++    # coordinates to the HAL's, whatever either calls its contigs.
++    loc2ref = defaultdict(set)                    # HelSus reference gene (EviAnn ID) -> HelSus row gene_id
++    for g in rgenes:
++        for r in (g.get("ref_genes") or "").split(","):
++            if r:
++                loc2ref[r].add(g["gene_id"])
++    have_refs = bool(loc2ref) and any(g.get("ref_genes") for gs in tgenes.values() for g in gs)
++    if tgenes and not have_refs and a.placement != "names":
++        N.warn("no ref_genes column in ref_genes.tsv / target_genes.tsv: re-run the patched 9a to place "
++               "genes by anchors; falling back to contig names")
++    lifted_at = defaultdict(list)                 # (code, HAL contig, HelSus gene_id) -> [(mid, strand)]
++    for h in glift:
++        lifted_at[(h["code"], h["contig"], h["gene_id"])].append(
++            ((int(h["start"]) + int(h["end"])) / 2, h["strand"]))
++    placed, how = {}, defaultdict(list)
++
++    def place(code, c):
++        """this genome's TOGA2 genes in HAL coordinates of bar contig c, and how they got there."""
+         gs = tgenes.get(code, [])
+         if not gs:
+-            return []
++            return [], None
++        if have_refs and a.placement != "names":
++            by = defaultdict(list)
++            for g in gs:
++                hids = {x for r in (g.get("ref_genes") or "").split(",") if r for x in loc2ref.get(r, ())}
++                for hid in hids:
++                    for mid, lst in lifted_at.get((code, c, hid), []):
++                        hal_st = ginfo[hid]["strand"] if lst == "+" else P.flipstrand(ginfo[hid]["strand"])
++                        by[g["contig"]].append(((int(g["start"]) + int(g["end"])) / 2, mid,
++                                                1 if hal_st == g["strand"] else -1))
++            fits = {tc: fit_anchors(an, a.anchor_tol_kb * 1000) for tc, an in by.items()}
++            fits = {tc: f for tc, f in fits.items() if len(f[2]) >= a.min_anchors}
++            if fits:
++                tc = max(fits, key=lambda k: len(fits[k][2]))
++                sign, f, keep, off = fits[tc]
++                out = []
++                for g in gs:
++                    if g["contig"] != tc:
++                        continue
++                    s_, e_ = sorted((round(f(int(g["start"]))), round(f(int(g["end"])))))
++                    out.append(dict(g, start=s_, end=e_,
++                                    strand=g["strand"] if sign > 0 else P.flipstrand(g["strand"])))
++                same = sign > 0 and abs(off) < 1000 and (tc == c or norm_ctg(tc) == norm_ctg(c))
++                return out, (f"TOGA2 {tc} via {len(keep)} anchor(s)" +
++                             (", same coordinates" if same else
++                              f", {'inverted, ' if sign < 0 else ''}offset {off / 1000:+.0f} kb"))
++            if a.placement == "anchors":
++                return [], None
+         want = alias.get(code, {}).get(c)
+-        return [g for g in gs if g["contig"] == want] if want else []
++        if want:
++            return [g for g in gs if g["contig"] == want], f"TOGA2 {want} by contig name"
++        return [], None
++
++    def genes_on(code, c):
++        return placed.get((code, c), [])
+ 
+     for code in codes:
+         p = pos.get(code, {})
+@@ -326,8 +438,14 @@
+             N.info(f"{code}: {len(left_out)} contig(s) with {sum(bp[c] for c in left_out) / 1000:.1f} kb aligned not drawn")
+         gctgs = {g["contig"] for g in tgenes.get(code, [])}
+         alias[code] = resolve_ctgs(code, ctgs, gctgs, cmanual)
+-        if gctgs and len(alias[code]) < len(ctgs):
+-            ctg_warn.append((code, [c for c in ctgs if c not in alias[code]], sorted(gctgs)))
++        for c in ctgs:
++            placed[(code, c)], h_ = place(code, c)
++            if h_:
++                how[code].append(f"{c} <- {h_}")
++        if gctgs and not any(placed[(code, c)] for c in ctgs):
++            ctg_warn.append((code, ctgs, sorted(gctgs)))
++        elif how[code]:
++            N.info(f"{code}: " + "; ".join(how[code]))
+         bars = []
+         for c in ctgs:
+             recs = [(r, v) for r, v in p.items() if v[0] == c]
+@@ -335,6 +453,9 @@
+             flip = minus * 2 > sum(v[2] - v[1] for _, v in recs)
+             ivals = [(v[1], v[2]) for _, v in recs]
+             own = genes_on(code, c)
++            span = (min(min(v[1], v[2]) for _, v in recs) - maxgap, max(max(v[1], v[2]) for _, v in recs) + maxgap)
++            own = [g for g in own if int(g["end"]) >= span[0] and int(g["start"]) <= span[1]]
++            placed[(code, c)] = own                # genes far outside the aligned stretch would stretch the bar
+             ivals += [(int(g["start"]), int(g["end"])) for g in (own if own else
+                       [h for h in glift if h["code"] == code and h["contig"] == c])]
+             b = Bar(c, flip, ivals, pad, maxgap, brk)
+@@ -615,7 +736,8 @@
+             for r in lay:
+                 fh.write("\t".join(map(str, r)) + "\n")
+     for code, bad, gctgs in ctg_warn:
+-        N.warn(f"{code}: no annotation matched the drawn contig(s) {', '.join(bad)}; its TOGA2 genes "
++        N.warn(f"{code}: no TOGA2 annotation could be placed on the drawn contig(s) {', '.join(bad)} "
++               f"(no shared anchors and no contig-name match); its TOGA2 genes "
+                f"are on {', '.join(gctgs[:6])}{' ...' if len(gctgs) > 6 else ''}. The bars come from "
+                f"halLiftover, so the two namings must line up. Add a line to --contig-map: "
+                f"{code}\t{gctgs[0] if gctgs else '<TOGA2 contig>'}\t{bad[0]}")

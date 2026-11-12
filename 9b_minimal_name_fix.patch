@@ -1,0 +1,24 @@
+--- 9b.orig	2026-11-12 14:14:10.625979351 -0500
++++ 9b_min.py	2026-11-12 14:18:42.669412711 -0500
+@@ -41,6 +41,11 @@
+ SHORT_NAME = {"exendin_anc": "anc", "gcgl": "GCGL"}
+ 
+ 
++def canon_ctg(c):
++    """same name, different separators: TOGA2 writes NC_086153.1 as NC_086153__1, Cactus as NC_086153_1."""
++    return re.sub(r"[._]+", "_", (c or "").strip().lower())
++
++
+ def norm_ctg(c):
+     """loose contig key, so chr5 / Chr5 / HelCha_chr5 / NC_000005.1 / SUPER_5 can be matched."""
+     c = re.sub(r"\.\d+$", "", (c or "").strip().lower())
+@@ -57,6 +62,9 @@
+             out[c] = manual[(code, c)]; left.discard(out[c]); continue
+         if c in left:
+             out[c] = c; left.discard(c); continue
++        hits = [g for g in left if canon_ctg(g) == canon_ctg(c)]     # NC_086153__1 = NC_086153_1 = NC_086153.1
++        if len(hits) == 1:
++            out[c] = hits[0]; left.discard(hits[0]); continue
+         hits = [g for g in left if norm_ctg(g) == norm_ctg(c)]
+         if len(hits) == 1:
+             out[c] = hits[0]; left.discard(hits[0])
