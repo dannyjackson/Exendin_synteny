@@ -3,14 +3,18 @@
 Lift the HelSus SLC4A8-AQP5 interval through the Cactus alignment into every other genome,
 for the alignment-based river plot (9b_plot_hal_river.py).
 
-1. Region. SLC4A8 and AQP5 are found in the HelSus annotation (--gff; EviAnn names such as
-   'Similar to SLC4A8: ...' are read as SLC4A8; NAME=ID adds gene IDs, e.g.
-   AQP5=LOC_00012326). The region is the pair +/- --pad-kb.
-2. Tiles. The region is cut into --tile-kb tiles (BED6, + strand) and every HelSus gene in
-   it is written as a BED6 interval.
-3. Lift. halLiftover maps tiles and genes from HelSus into each target genome (every leaf
-   of the HAL tree except HelSus, or --targets). A lifted '-' strand = inverted relative to
-   HelSus.
+Genes come from the TOGA2 interval tables written by 3c (--genes-out), not from a GFF, so
+every genome carries ITS OWN annotation in its own coordinates rather than a projection of
+the reference's. --names applies the step-5 nomenclature (Exendin_anc, A, B, Z, GCGL ...).
+
+1. Region. The reference's two boundary rows (the `boundary` column of the TOGA2 table)
+   give SLC4A8 and AQP5; the region is that pair +/- --pad-kb.
+2. Tiles. The region is cut into --tile-kb tiles (BED6, + strand). The reference's own genes
+   are also written as BED6, so their projection can be compared with each target's
+   annotation.
+3. Lift. halLiftover maps tiles and reference genes from the reference into each target
+   genome (every leaf of the HAL tree except the reference, or --targets). A lifted '-'
+   strand = inverted relative to the reference.
 4. Hits. Per tile and target: the contig with the most lifted bp, and on it the largest
    cluster of fragments (gap < --cluster-kb), is the primary hit. Other clusters with at
    least --secondary-frac of the tile's bp are secondary hits (duplicated or paralogous
@@ -19,24 +23,27 @@ for the alignment-based river plot (9b_plot_hal_river.py).
    order (gap < --max-gap-kb in both genomes) are chained into a syntenic block.
 
 Needs halLiftover and halStats on PATH (Biowulf: module load cactus). Python standard
-library only. Read-only on the HAL file and GFF. Writes to --outdir:
-  region.tsv         HelSus chromosome, region, boundary genes used
-  ref_genes.tsv      HelSus genes in the region (symbol, description, family group)
+library only. Read-only on the HAL file and the TOGA2 tables. Writes to --outdir:
+  region.tsv         reference chromosome, region, boundary genes used
+  ref_genes.tsv      reference genes in the region (name, symbol, group, family, kind)
+  target_genes.tsv   every target's OWN TOGA2 genes, in its own coordinates, with the
+                     step-5 name where --names gives one
   tiles.bed, genes.bed           what was lifted
   lifted/<target>.{tiles,genes}.bed   raw halLiftover output
   tile_hits.tsv      every tile's primary and secondary hit in every target (for the river plot)
-  blocks.tsv         target, contig, target start/end, strand, HelSus start/end, aligned bp,
+  blocks.tsv         target, contig, target start/end, strand, reference start/end, aligned bp,
                      primary/secondary, number of tiles
-  genes_lifted.tsv   target, HelSus gene, contig, start, end, strand, fraction of the gene lifted
+  genes_lifted.tsv   target, reference gene, contig, start, end, strand, fraction lifted
   targets.tsv        target genome -> species code, aligned bp, main contig
 
 Usage
   module load cactus
   python3 9a_hal_lift_region.py --hal ${CACTUSDIR}/<alignment>.hal --ref HelSus \
-      --gff ${HELSUS_EVIANN_GFF} --boundaries SLC4A8,AQP5=LOC_00012326 \
+      --toga2-genes ../synteny_toga2/interval/interval_HelSus_genes.tsv \
+      --names ../toga2_exendin_tree/names/names.tsv \
       --pad-kb 25 --outdir hal_lift --threads 8 2> hal_lift.log
 """
-import argparse, gzip, os, re, shutil, subprocess, sys
+import argparse, csv, os, re, shutil, subprocess, sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import unquote
@@ -45,13 +52,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import lib_exendin_names as N  # noqa: E402
 
-DEFAULT_RX = {"SLC4A8": r"solute carrier family 4 member 8", "AQP5": r"aquaporin[- ]?5"}
-SIMILAR = re.compile(r"^\s*similar to\s+([A-Za-z0-9][A-Za-z0-9._-]*)\s*:\s*(.*)$", re.I)
-ID_LIKE = re.compile(r"^(LOC_?\d+|gene-|rna-|[XN][MR]_\d+|ENS[A-Z]*\d+)", re.I)
-
-
-def opener(p):
-    return gzip.open(p, "rt") if p.endswith(".gz") else open(p)
+def read_tsv(path):
+    if not os.path.exists(path):
+        sys.exit(f"[error] no such file: {path}")
+    with open(path) as fh:
+        return list(csv.DictReader(fh, delimiter="\t"))
 
 
 def code_of(name):
@@ -77,59 +82,77 @@ def hal_leaves(hal):
     return [t.strip() for t in re.findall(r"[(,]\s*([^(),;]+)", s) if t.strip()]
 
 
-def gff_genes(gff, contig=None):
-    """gene records: dict(id, contig, start, end, strand, symbol, description)."""
-    genes, txdesc = {}, {}
-    with opener(gff) as fh:
-        for line in fh:
-            if line.startswith("#"):
+def toga2_genes(paths, names_path=None):
+    """{species code: [gene records]} from the 3c --genes-out tables. First file wins per species."""
+    byspp, src = {}, {}
+    for p in paths:
+        for r in read_tsv(p):
+            q = r.get("species", "")
+            if q in src and src[q] != p:
                 continue
-            t = line.rstrip("\n").split("\t")
-            if len(t) < 9 or (contig and t[0] != contig):
-                continue
-            at = {k: unquote(v) for k, v in (kv.split("=", 1) for kv in t[8].strip().strip(";").split(";") if "=" in kv)}
-            if t[2] in ("gene", "pseudogene"):
-                sym = at.get("gene") or at.get("Name") or ""
-                if sym == at.get("ID") or ID_LIKE.match(sym):
-                    sym = ""
-                desc = at.get("description") or at.get("Note") or at.get("product") or ""
-                genes[at.get("ID", "")] = dict(id=at.get("ID", ""), contig=t[0], start=int(t[3]), end=int(t[4]),
-                                               strand=t[6], symbol=sym, description=desc,
-                                               biotype=at.get("gene_biotype", t[2]))
-            elif t[2] in ("mRNA", "transcript") and at.get("Parent"):
-                txdesc.setdefault(at["Parent"].split(",")[0], at.get("product") or at.get("Note") or "")
-    for gid, g in genes.items():
-        if not g["description"]:
-            g["description"] = txdesc.get(gid, "")
-        if not g["symbol"]:
-            m = SIMILAR.match(g["description"])
-            if m:
-                g["symbol"], g["description"] = m.group(1), m.group(2)
-        text = " | ".join([g["symbol"], g["description"]])
-        grp = N.name_group(text)
-        g["family"] = N.is_family(grp) or grp == "proglucagon"
-        g["group"] = grp if g["family"] else "other gene"
-    return list(genes.values())
+            src.setdefault(q, p)
+            grp = r.get("group") or ""
+            fam = bool(N.is_family(grp) or grp == "proglucagon")
+            byspp.setdefault(q, []).append(dict(
+                id=r.get("query_gene", ""), contig=r.get("contig", ""),
+                start=int(r["start"]), end=int(r["end"]), strand=r.get("strand") or "+",
+                symbol=r.get("symbol") or "", description=r.get("description") or "",
+                status=r.get("status") or "", group=grp if fam else "other gene", family=fam,
+                kind="boundary" if r.get("boundary") else "gene", name=""))
+    for q in sorted(src):
+        N.info(f"{q}: {len(byspp[q])} TOGA2 genes ({sum(g['family'] for g in byspp[q])} family) "
+               f"from {os.path.basename(src[q])}")
+    if names_path:
+        apply_names(byspp, names_path)
+    return byspp
 
 
-def find_region(genes, bspec, pad):
+def apply_names(byspp, path):
+    """names.tsv from 10f/10h -> the 'name' field, matched on species + contig + overlap."""
+    n, miss = 0, []
+    for r in read_tsv(path):
+        q, new = r.get("species", ""), r.get("new_name", "")
+        try:
+            s0, e0 = int(r["start"]), int(r["end"])
+        except (KeyError, ValueError):
+            miss.append(new); continue
+        best = None
+        for g in byspp.get(q, []):
+            if g["contig"] != r.get("contig"):
+                continue
+            ov = min(g["end"], e0) - max(g["start"], s0)
+            if ov > 0 and (best is None or ov > best[0]):
+                best = (ov, g)
+        if best:
+            best[1]["name"] = new; n += 1
+        else:
+            miss.append(new)
+    N.info(f"named {n} gene(s) from {os.path.basename(path)}")
+    if miss:
+        N.warn(f"{len(miss)} name(s) with no gene in the TOGA2 interval table: {', '.join(miss[:8])}"
+               + (" ..." if len(miss) > 8 else ""))
+
+
+def find_region(genes, bnames, pad):
+    """the two boundary rows of the reference -> contig, lo, hi, left gene, right gene."""
     cands = {}
-    for name, ids, rx in bspec:
-        cands[name] = [g for g in genes if g["symbol"].upper() == name.upper() or g["id"] in ids
-                       or rx.search(g["description"])]
-        if not cands[name]:
-            sys.exit(f"[error] no {name} gene in the GFF; give its ID as {name}=<gene ID>")
-    (n0, *_), (n1, *_) = bspec
-    pairs = [(abs((a["start"] + a["end"]) / 2 - (b["start"] + b["end"]) / 2), a, b)
-             for a in cands[n0] for b in cands[n1] if a["contig"] == b["contig"]]
+    for nm in bnames:
+        cands[nm] = [g for g in genes if g["kind"] == "boundary" and g["symbol"].upper() == nm.upper()]
+        if not cands[nm]:
+            have = sorted({g["symbol"] for g in genes if g["kind"] == "boundary"})
+            sys.exit(f"[error] no {nm} boundary row for the reference in the TOGA2 table "
+                     f"(boundary symbols present: {', '.join(have) or 'none'}); check --boundaries")
+    n0, n1 = bnames
+    pairs = [(abs((x["start"] + x["end"]) / 2 - (y["start"] + y["end"]) / 2), x, y)
+             for x in cands[n0] for y in cands[n1] if x["contig"] == y["contig"]]
     if not pairs:
-        sys.exit(f"[error] {n0} and {n1} are not on one contig in the GFF")
-    _, a, b = min(pairs, key=lambda p: p[0])
-    for name, c in ((n0, cands[n0]), (n1, cands[n1])):
-        if len(c) > 1:
-            N.info(f"{name}: {len(c)} candidates ({', '.join(g['id'] for g in c[:6])}); using the pair closest together")
-    lo, hi = min(a["start"], b["start"]), max(a["end"], b["end"])
-    return a["contig"], max(1, lo - pad), hi + pad, a, b
+        sys.exit(f"[error] {n0} and {n1} are not on one contig in the reference's TOGA2 rows")
+    _, x, y = min(pairs, key=lambda t: t[0])
+    for nm in bnames:
+        if len(cands[nm]) > 1:
+            N.info(f"{nm}: {len(cands[nm])} boundary rows; using the pair closest together")
+    lo, hi = min(x["start"], y["start"]), max(x["end"], y["end"])
+    return x["contig"], max(1, lo - pad), hi + pad, x, y
 
 
 def read_bed(path):
@@ -194,9 +217,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--hal", required=True)
     ap.add_argument("--ref", default="HelSus", help="reference genome: HAL name, or its 3+3 code")
-    ap.add_argument("--gff", required=True, help="annotation of the reference (HelSus EviAnn)")
-    ap.add_argument("--hal-chrom", help="reference chromosome name in the HAL, if not the GFF's")
-    ap.add_argument("--boundaries", default="SLC4A8,AQP5", help="left,right; NAME=ID|ID adds gene IDs")
+    ap.add_argument("--toga2-genes", required=True,
+                    help="comma-separated 3c --genes-out tables; the first one holding a species supplies it")
+    ap.add_argument("--names", help="names.tsv from 10f/10h: applies the step-5 gene names")
+    ap.add_argument("--hal-chrom", help="reference chromosome name in the HAL, if not the table's")
+    ap.add_argument("--boundaries", default="SLC4A8,AQP5", help="left,right boundary gene symbols")
     ap.add_argument("--pad-kb", type=float, default=25.0, help="added to each side of the boundary pair")
     ap.add_argument("--tile-kb", type=float, default=1.0)
     ap.add_argument("--targets", help="comma-separated HAL genome names (default: every other leaf)")
@@ -219,33 +244,50 @@ def main():
     targets = a.targets.split(",") if a.targets else [l for l in leaves if l != ref]
     N.info(f"HAL leaves: {len(leaves)}; reference {ref}; {len(targets)} targets")
 
-    bspec = []
-    for item in a.boundaries.split(","):
-        name, _, ids = item.partition("=")
-        bspec.append((name, {i for i in ids.split("|") if i},
-                      re.compile(rf"(?<![A-Za-z0-9])(?:{DEFAULT_RX.get(name, re.escape(name))})(?![A-Za-z0-9])", re.I)))
-    genes = gff_genes(a.gff)
-    contig, lo, hi, b0, b1 = find_region(genes, bspec, int(a.pad_kb * 1000))
+    bnames = [x.strip() for x in a.boundaries.split(",")][:2]
+    byspp = toga2_genes([x.strip() for x in a.toga2_genes.split(",") if x.strip()], a.names)
+    refcode = code_of(ref)
+    if refcode not in byspp:
+        sys.exit(f"[error] the reference {refcode} has no rows in the TOGA2 table(s) "
+                 f"(species present: {', '.join(sorted(byspp))})")
+    genes = byspp[refcode]
+    contig, lo, hi, b0, b1 = find_region(genes, bnames, int(a.pad_kb * 1000))
     chrom = a.hal_chrom or contig
     seqs = set(run(["halStats", "--sequences", ref, a.hal]).replace(",", "\n").split())
     if chrom not in seqs:
         sys.exit(f"[error] {chrom} is not a sequence of {ref} in the HAL (e.g. {', '.join(sorted(seqs)[:5])}); "
                  f"pass the HAL name with --hal-chrom")
-    N.info(f"region {chrom}:{lo}-{hi} ({(hi - lo) / 1000:.0f} kb): {bspec[0][0]} {b0['id']} {b0['start']}-{b0['end']}, "
-           f"{bspec[1][0]} {b1['id']} {b1['start']}-{b1['end']}, +/- {a.pad_kb:g} kb")
+    N.info(f"region {chrom}:{lo}-{hi} ({(hi - lo) / 1000:.0f} kb): {bnames[0]} {b0['id']} {b0['start']}-{b0['end']}, "
+           f"{bnames[1]} {b1['id']} {b1['start']}-{b1['end']}, +/- {a.pad_kb:g} kb")
     with open(os.path.join(a.outdir, "region.tsv"), "w") as fh:
         fh.write("ref\tchrom\tstart\tend\tleft\tleft_id\tright\tright_id\n")
-        fh.write(f"{ref}\t{chrom}\t{lo}\t{hi}\t{bspec[0][0]}\t{b0['id']}\t{bspec[1][0]}\t{b1['id']}\n")
+        fh.write(f"{ref}\t{chrom}\t{lo}\t{hi}\t{bnames[0]}\t{b0['id']}\t{bnames[1]}\t{b1['id']}\n")
 
     rgenes = [g for g in genes if g["contig"] == contig and g["end"] >= lo and g["start"] <= hi]
     for g in rgenes:
         g["kind"] = "boundary" if g["id"] in (b0["id"], b1["id"]) else "gene"
     with open(os.path.join(a.outdir, "ref_genes.tsv"), "w") as fh:
-        fh.write("gene_id\tsymbol\tgroup\tfamily\tkind\tstart\tend\tstrand\tdescription\n")
+        fh.write("gene_id\tname\tsymbol\tgroup\tfamily\tkind\tstart\tend\tstrand\tstatus\tdescription\n")
         for g in sorted(rgenes, key=lambda g: g["start"]):
-            fh.write(f"{g['id']}\t{g['symbol']}\t{g['group']}\t{int(g['family'])}\t{g['kind']}\t{g['start']}\t"
-                     f"{g['end']}\t{g['strand']}\t{g['description']}\n")
-    N.info(f"{len(rgenes)} HelSus genes in the region, {sum(g['family'] for g in rgenes)} exendin-family")
+            fh.write(f"{g['id']}\t{g['name']}\t{g['symbol']}\t{g['group']}\t{int(g['family'])}\t{g['kind']}\t"
+                     f"{g['start']}\t{g['end']}\t{g['strand']}\t{g['status']}\t{g['description']}\n")
+    N.info(f"{len(rgenes)} {refcode} genes in the region, {sum(g['family'] for g in rgenes)} exendin-family")
+
+    # every target's own annotation, in its own coordinates
+    tcodes = {code_of(t): t for t in targets}
+    with open(os.path.join(a.outdir, "target_genes.tsv"), "w") as fh:
+        fh.write("code\tgene_id\tname\tsymbol\tgroup\tfamily\tkind\tcontig\tstart\tend\tstrand\tstatus\tdescription\n")
+        nt = 0
+        for q in sorted(tcodes):
+            for g in sorted(byspp.get(q, []), key=lambda g: (g["contig"], g["start"])):
+                fh.write(f"{q}\t{g['id']}\t{g['name']}\t{g['symbol']}\t{g['group']}\t{int(g['family'])}\t"
+                         f"{g['kind']}\t{g['contig']}\t{g['start']}\t{g['end']}\t{g['strand']}\t{g['status']}\t"
+                         f"{g['description']}\n")
+                nt += 1
+    no_ann = sorted(q for q in tcodes if not byspp.get(q))
+    N.info(f"{nt} TOGA2 genes across {len(tcodes) - len(no_ann)} target(s)")
+    if no_ann:
+        N.warn(f"no TOGA2 rows (the river will show these rows without genes): {', '.join(no_ann)}")
 
     tile = int(a.tile_kb * 1000)
     tiles_bed, genes_bed = os.path.join(a.outdir, "tiles.bed"), os.path.join(a.outdir, "genes.bed")
@@ -320,7 +362,7 @@ def main():
                     fg.write(f"{tg}\t{code}\t{gid}\t{c}\t{s + 1}\t{e}\t{st}\t{bp / glen.get(gid, 1):.3f}\t"
                              f"{'primary' if k == 0 else 'secondary'}\n")
         fh_t.close()
-    N.info(f"wrote {a.outdir}/blocks.tsv, tile_hits.tsv, genes_lifted.tsv, targets.tsv")
+    N.info(f"wrote {a.outdir}/blocks.tsv, tile_hits.tsv, genes_lifted.tsv, target_genes.tsv, targets.tsv")
 
 
 if __name__ == "__main__":

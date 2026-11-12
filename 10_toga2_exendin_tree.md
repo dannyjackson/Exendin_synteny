@@ -39,6 +39,7 @@ Use it when you want an outgroup to root the tree.
 Run the set-up block of `0_Environment_management.md` first. `10a` reads its helpers from
 `3b_collect_toga2_exendins.py` and `3c_plot_toga2_synteny.py`, so keep all three in `${SCRIPTDIR}`.
 ```
+cd ${SCRIPTDIR} && git pull 
 mkdir -p ${WORK}/toga2_exendin_tree && cd ${WORK}/toga2_exendin_tree
 ```
 

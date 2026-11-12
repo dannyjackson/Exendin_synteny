@@ -49,6 +49,13 @@ def viridis(x):
     return "#FDE725"
 
 
+def fmt_dist(v):
+    """hidden-sequence label: 2 significant figures, never more precision than is meant."""
+    if v >= 1e6:
+        return f"{v / 1e6:.1f} Mb" if v < 1e7 else f"{round(v / 1e6):g} Mb"
+    return f"{v / 1e3:.0f} kb"
+
+
 def read_tsv(path):
     with open(path) as fh:
         return list(csv.DictReader(fh, delimiter="\t"))
@@ -71,16 +78,17 @@ class Bar:
         self.contig, self.flip = contig, flip
         o = sorted((min(self.o(s), self.o(e)), max(self.o(s), self.o(e))) for s, e in ivals)
         self.segs, shift, end = [], 0.0, None             # (oriented start, shift)
+        skipped = []                                      # bp hidden by each break
         for s, e in o:
             if end is not None and s - end > max_gap:
+                skipped.append(s - end)
                 shift += (s - end) - brk
                 self.segs.append((s, shift))
             end = e if end is None else max(end, e)
         self.lo, self.hi = o[0][0] - pad, end + pad
-        self.breaks = []
+        self.brk = brk
         self.offset = 0.0
-        for s, sh in self.segs:
-            self.breaks.append(s - sh - brk / 2)
+        self.breaks = [(s - sh - brk / 2, skipped[i]) for i, (s, sh) in enumerate(self.segs)]
 
     def o(self, v):
         return -v if self.flip else v
@@ -119,10 +127,18 @@ def main():
     ap.add_argument("--max-jump-kb", type=float, default=20.0, help="a ribbon breaks where either genome jumps more")
     ap.add_argument("--pad-kb", type=float, default=5.0)
     ap.add_argument("--max-gap-kb", type=float, default=100.0, help="unaligned stretches longer than this are cut (//)")
-    ap.add_argument("--break-kb", type=float, default=10.0)
+    ap.add_argument("--break-kb", type=float, default=45.0,
+                    help="width of the drawn gap where a long unaligned stretch is cut out")
+    ap.add_argument("--no-break-labels", dest="break_labels", action="store_false",
+                    help="do not print how much sequence each break hides")
     ap.add_argument("--bar-gap-kb", type=float, default=20.0, help="space between two contigs of one genome")
     ap.add_argument("--width-mm", type=float, default=180.0)
     ap.add_argument("--font-pt", type=float, default=7.0)
+    ap.add_argument("--drop-species", default="",
+                    help="comma-separated codes to leave out of the figure entirely, e.g. AnnSte,BarImb,ElgCoe")
+    ap.add_argument("--gene-labels", choices=("named", "all", "none"), default="named",
+                    help="named (default): only genes carrying a step-5 name; all: every gene with a name or symbol")
+    ap.add_argument("--label-tiers", type=int, default=2)
     ap.add_argument("--full-names", action="store_true")
     ap.add_argument("--svg"); ap.add_argument("--pdf"); ap.add_argument("--png")
     ap.add_argument("--dpi", type=int, default=600)
@@ -139,7 +155,16 @@ def main():
     ginfo = {g["gene_id"]: g for g in rgenes}
     hits = read_tsv(os.path.join(a.indir, "tile_hits.tsv"))
     glift = read_tsv(os.path.join(a.indir, "genes_lifted.tsv"))
+    tgpath = os.path.join(a.indir, "target_genes.tsv")
+    tgenes = defaultdict(list)
+    if os.path.exists(tgpath):
+        for g in read_tsv(tgpath):
+            tgenes[g["code"]].append(g)
+    else:
+        N.warn("no target_genes.tsv: falling back to the reference's genes projected into each target "
+               "(re-run 9a to draw each genome's own TOGA2 annotation)")
     targets = read_tsv(os.path.join(a.indir, "targets.tsv"))
+    drop = {c.strip() for c in a.drop_species.split(",") if c.strip()}
     names = {r["code"]: r["species"] for r in N.read_species_table(a.species_table)} if a.species_table else {}
     pad, maxgap, brk = a.pad_kb * 1000, a.max_gap_kb * 1000, a.break_kb * 1000
 
@@ -149,7 +174,9 @@ def main():
         return g["group"] if (a.colour == "family" or g["group"].startswith("exendin")) else None
 
     famgenes = [(int(g["start"]), int(g["end"]), fam_group(g)) for g in rgenes if fam_group(g)]
-    groups = sorted({f[2] for f in famgenes}, key=lambda g: (not g.startswith("GCGL"), not g.startswith("exendin-"), g))
+    allg = {f[2] for f in famgenes} | {fam_group(g) for gs in tgenes.values() for g in gs
+                                       if g["code"] not in drop and fam_group(g)}
+    groups = sorted(allg, key=lambda g: (not g.startswith("GCGL"), not g.startswith("exendin-"), g))
     cmap = N.colour_map(groups)
 
     def tile_group(rs, re_):
@@ -179,7 +206,12 @@ def main():
 
     # ---- bars per genome ----
     bars_by, unaligned = {}, []
-    codes = [refcode] + [t["code"] for t in targets]
+    codes = [refcode] + [t["code"] for t in targets if t["code"] not in drop]
+    if drop:
+        N.info(f"left out of the figure: {', '.join(sorted(drop))}")
+        missing = drop - {t["code"] for t in targets}
+        if missing:
+            N.warn(f"--drop-species names {', '.join(sorted(missing))}, which is not in targets.tsv")
     for code in codes:
         p = pos.get(code, {})
         if not p:
@@ -199,7 +231,9 @@ def main():
             minus = sum(v[2] - v[1] for _, v in recs if v[3] == "-")
             flip = minus * 2 > sum(v[2] - v[1] for _, v in recs)
             ivals = [(v[1], v[2]) for _, v in recs]
-            ivals += [(int(g["start"]), int(g["end"])) for g in glift if g["code"] == code and g["contig"] == c]
+            own = [g for g in tgenes.get(code, []) if g["contig"] == c]
+            ivals += [(int(g["start"]), int(g["end"])) for g in (own if own else
+                      [h for h in glift if h["code"] == code and h["contig"] == c])]
             b = Bar(c, flip, ivals, pad, maxgap, brk)
             # keep only lifted genes inside the drawn window (others would stretch it)
             b.recs = recs
@@ -239,8 +273,10 @@ def main():
     XR = max(b.R for bs in bars_by.values() for b in bs)
     sc = (x1p - x0p) / (XR - XL)
     X = lambda v: x0p + (v - XL) * sc
-    bar_h, gene_h, row_step = fs * 0.45, fs * 0.9, fs * 3.4
-    top = margin + fs * 1.8
+    ntier = 0 if a.gene_labels == "none" else a.label_tiers
+    bar_h, gene_h = fs * 0.45, fs * 0.9
+    row_step = fs * (1.9 + 0.95 * ntier) + (fs * 0.9 if a.break_labels else 0)
+    top = margin + fs * (1.8 + 0.95 * ntier)
     ys = {q: top + k * row_step for k, q in enumerate(order)}
 
     out_rib, out_bar, out_txt, lay = [], [], [], []
@@ -323,22 +359,34 @@ def main():
         for b in bars_by[q]:
             out_bar.append(f'<rect x="{X(b.L):.2f}" y="{y - bar_h / 2:.2f}" width="{(b.R - b.L) * sc:.2f}" '
                            f'height="{bar_h:.2f}" rx="{bar_h / 2:.2f}" fill="#EFEFEF" stroke="#666" stroke-width="0.4"/>')
-            for bx in b.breaks:
+            for bx, skipped in b.breaks:
                 cx = X(bx + b.offset)
-                out_bar.append(f'<rect x="{cx - 1.6:.2f}" y="{y - bar_h:.2f}" width="3.2" height="{2 * bar_h:.2f}" fill="#fff"/>')
-                for d in (-1.0, 1.0):
-                    out_bar.append(f'<line x1="{cx + d - 1:.2f}" x2="{cx + d + 1:.2f}" y1="{y + 2.2:.2f}" '
-                                   f'y2="{y - 2.2:.2f}" stroke="#000" stroke-width="0.5"/>')
+                gw = max(3.0, b.brk * sc)                 # the drawn width of the gap
+                out_bar.append(f'<rect x="{cx - gw / 2 - 0.6:.2f}" y="{y - bar_h:.2f}" width="{gw + 1.2:.2f}" '
+                               f'height="{2 * bar_h:.2f}" fill="#fff"/>')
+                hh = bar_h * 2.3                           # slashes overhang the bar so they read as a cut
+                for stub in (cx - gw / 2, cx + gw / 2):    # a pair of slashes on each stub end
+                    for d in (-1.5, 1.5):
+                        out_bar.append(f'<line x1="{stub + d - 2.0:.2f}" x2="{stub + d + 2.0:.2f}" '
+                                       f'y1="{y + hh:.2f}" y2="{y - hh:.2f}" stroke="#000" stroke-width="1.0" '
+                                       f'stroke-linecap="round"/>')
+                if a.break_labels and skipped:
+                    out_txt.append(f'<text x="{cx:.2f}" y="{y + hh + fs * 0.75:.2f}" font-size="{fs * 0.8:.2f}" '
+                                   f'text-anchor="middle" fill="#555">{html.escape(fmt_dist(skipped))}</text>')
             lay.append([q, b.contig, "", "", "", "flipped" if b.flip else "as is", f"{X(b.L):.1f}-{X(b.R):.1f}"])
+            own = [g for g in tgenes.get(q, []) if g["contig"] == b.contig]
             if q == refcode:
-                gl = [(int(g["start"]), int(g["end"]), g, 1.0, "primary") for g in rgenes]
-            else:
+                gl = [(int(g["start"]), int(g["end"]), g, 1.0, "own") for g in rgenes]
+            elif own:                                    # the genome's own TOGA2 annotation
+                gl = [(int(g["start"]), int(g["end"]), g, 1.0, "own") for g in own]
+            else:                                        # fallback: the reference's genes, projected
                 gl = [(int(g["start"]), int(g["end"]), ginfo[g["gene_id"]], float(g["frac_lifted"]), g["hit"])
                       for g in glift if g["code"] == q and g["contig"] == b.contig and g["gene_id"] in ginfo]
-            for s, e, g, frac, hit in sorted(gl, key=lambda t: fam_group(t[2]) is not None):
-                gx0, gx1 = sorted((X(b.x(s)), X(b.x(e))))
-                st = g["strand"] if (q == refcode) else g["strand"]
-                if q != refcode:
+            slots = []
+            for s_, e_, g, frac, hit in sorted(gl, key=lambda t: fam_group(t[2]) is not None):
+                gx0, gx1 = sorted((X(b.x(s_)), X(b.x(e_))))
+                st = g["strand"]
+                if hit != "own":                         # projected: orient by the lift, not the reference
                     v = [h for h in glift if h["code"] == q and h["gene_id"] == g["gene_id"] and h["contig"] == b.contig]
                     if v and v[0]["strand"] == "-":
                         st = P.flipstrand(st)
@@ -351,12 +399,24 @@ def main():
                     fill, edge = cmap[grp], cmap[grp]
                 else:
                     fill, edge = P.OTHER_FILL, "#777"
-                pts, _ = P.arrow(gx0, gx1, y, gene_h, st, 1.6)
-                hollow = frac < 0.5
+                pts, (a0, a1) = P.arrow(gx0, gx1, y, gene_h, st, 1.6)
+                intact = (g.get("status", "") or "I") in ("I", "FI", "PI", "")
+                hollow = (frac < 0.5) if hit != "own" else not intact
                 dash = ' stroke-dasharray="1.2,0.8"' if hit == "secondary" else ""
-                tip = html.escape(f'{g["symbol"] or g["gene_id"]} | {g["description"]} | {100 * frac:.0f}% aligned')
+                tip = html.escape(" | ".join(x for x in (g.get("name") or g["symbol"] or g.get("gene_id", ""),
+                                                         g.get("status", ""), g["description"],
+                                                         "" if hit == "own" else f"{100 * frac:.0f}% aligned") if x))
                 out_bar.append(f'<polygon points="{pts}" fill="{"#fff" if hollow else fill}" stroke="{edge}" '
                                f'stroke-width="{0.7 if hollow or dash else 0.35}"{dash}><title>{tip}</title></polygon>')
+                lab = g.get("name") or ""
+                if a.gene_labels == "all" and not lab and g["kind"] != "boundary":
+                    lab = g["symbol"]
+                if lab and a.gene_labels != "none":
+                    slots.append(((a0 + a1) / 2, P.text_w(lab, fs * 0.85), lab))
+            for (cx, w, lab), tier in zip(slots, S.place_labels([(c, w) for c, w, _ in slots],
+                                                                max_tiers=a.label_tiers)):
+                out_txt.append(f'<text x="{cx:.2f}" y="{y - gene_h / 2 - fs * (0.45 + 0.95 * tier):.2f}" '
+                               f'font-size="{fs * 0.85:.2f}" text-anchor="middle">{html.escape(lab)}</text>')
 
     if tree is not None:
         def depth(n):
@@ -390,7 +450,7 @@ def main():
     T(X(rb.x(hi)), margin + fs, right, font_style="italic", text_anchor="end")
 
     # scale bar + legend
-    y = ys[order[-1]] + gene_h + fs * 1.4
+    y = ys[order[-1]] + gene_h + fs * (2.2 if a.break_labels else 1.4)
     sb = P.nice_scale(XR - XL)
     out_txt.append(f'<line x1="{x0p:.2f}" x2="{x0p + sb * sc:.2f}" y1="{y:.2f}" y2="{y:.2f}" stroke="#000" stroke-width="0.8"/>')
     T(x0p + sb * sc + 3, y + fs * 0.35, P.fmt_kb(sb))
@@ -399,7 +459,7 @@ def main():
     items += [(P.OTHER, P.OTHER_FILL, "#777", "", False), (f"{left} / {right}", P.BOUNDARY_FILL[0], P.BOUNDARY_FILL[0], "", True)]
     if a.ribbon_colour == "direction":
         items += [("collinear", FWD, FWD, "", False), ("inverted", INV, INV, "", False)]
-    items += [("<50% of gene aligned", "#fff", "#000", "", False)]
+    items += [("not intact (TOGA2)" if tgenes else "<50% of gene aligned", "#fff", "#000", "", False)]
     if a.secondary:
         items.append(("duplicated (secondary)", "#999999", "#999999", ' fill-opacity="0.35"', False))
     defs = ""
