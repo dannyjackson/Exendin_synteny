@@ -185,6 +185,9 @@ def main():
     ap.add_argument("--contig-map",
                     help="TSV, no header: code <tab> contig in the TOGA2 table <tab> contig in the HAL. "
                          "Only needed when the two namings cannot be matched automatically")
+    ap.add_argument("--label-species", default="ref",
+                    help="which rows carry gene labels: 'ref' (default, the reference row only), "
+                         "'all', or a comma-separated list of codes")
     ap.add_argument("--label-style", choices=("short", "full"), default="short",
                     help="short (default): drop the species prefix, so HelCha_Exendin_anc is 'anc'; full: the whole name")
     ap.add_argument("--label-tiers", type=int, default=2)
@@ -360,6 +363,13 @@ def main():
 
     out_rib, out_bar, out_txt, lay = [], [], [], []
     foreign, projected = defaultdict(int), defaultdict(int)
+    sel = a.label_species.strip().lower()
+    label_on = set(codes) if sel == "all" else ({refcode} if sel in ("ref", "") else
+                                                {c.strip() for c in a.label_species.split(",") if c.strip()})
+    if sel not in ("all", "ref", ""):
+        unknown = label_on - set(codes)
+        if unknown:
+            N.warn(f"--label-species names {', '.join(sorted(unknown))}, not drawn in this figure")
 
     def T(x, yy, s, **kw):
         out_txt.append(f'<text x="{x:.2f}" y="{yy:.2f}" font-size="{fs}"'
@@ -499,7 +509,7 @@ def main():
                     lab = g["symbol"]
                 if hit != "own":
                     projected[q] += 1
-                if lab and a.gene_labels != "none":
+                if lab and a.gene_labels != "none" and q in label_on:
                     slots.append(((a0 + a1) / 2, P.text_w(lab, fs * 0.85), lab))
             for (cx, w, lab), tier in zip(slots, S.place_labels([(c, w) for c, w, _ in slots],
                                                                 max_tiers=a.label_tiers)):

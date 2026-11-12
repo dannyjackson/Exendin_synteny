@@ -138,7 +138,11 @@ river and named in the log (`not aligned to the interval`).
     construction. `--gene-colour group` reverts to one colour per family group
     (exendin-2, exendin-2/4, exendin-4, GCGL, proglucagon), which is the better choice if
     the nomenclature is still provisional. Every other gene is grey, SLC4A8/AQP5 dark grey.
-  - **Labels** are the step-5 names with the species prefix dropped, since the row already
+  - **Labels are on the reference row only** (`--label-species ref`, the default): the
+    reference carries the nomenclature key and every other row is read off it by colour,
+    which keeps the array legible at 180 mm. `--label-species all` labels every row,
+    `--label-species HelSus,HelCha` a chosen few.
+  - Labels are the step-5 names with the species prefix dropped, since the row already
     says the species: `anc`, `A`, `B`, `Z`, `Y`, `GCGL`. `--label-style full` restores
     `HelCha_Exendin_anc`. `--gene-labels all` also labels the grey genes by symbol;
     `--gene-labels none` turns labels off; `--label-tiers 3` gives crowded rows another
@@ -147,6 +151,12 @@ river and named in the log (`not aligned to the interval`).
     Shortening only strips the row's own code, so `HelSus_B` on the *H. charlesbogerti*
     row stays long, and is counted in a warning rather than disguised as that genome's
     own gene B.
+
+### Check this once, whatever the labels say
+With labels on the reference row only, a row drawing the reference's projected genes
+instead of its own looks exactly like a row drawing its own. Confirm it in the log before
+you use the figure: 9b reports every row that fell back, and `--label-species all` shows
+the names it would otherwise hide.
 
 ### When a row shows `HelSus_*` labels
 The bars are built from `halLiftover` output, so they are named with the **HAL's**
