@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HelCha's SLC4A8-AQP5 interval, and the TOGA2 annotation error behind its exendin-3 model.
+The TOGA2 annotation error behind HelCha's exendin-3 model, and the curated model.
 
 TOGA2 copies the reference transcript's exon structure onto the query. For the HelSus
 exendin-4 gene (LOC_00012325) the EviAnn reference has two isoforms. mRNA-2 starts with a
@@ -10,13 +10,14 @@ wrong first exon (~110 extra residues, 198 aa) and missed the real one, 5.9 kb a
 excludes mRNA-2 and rebuilds the locus from the published H. horridum exendin-3 cDNA
 (AJ580309, lib_rescue_locus.py).
 
-  A  HelCha interval: TOGA2 genes (HelSus reference onto HelCha, step 3's genes table),
-     above the curated names (names.tsv), as in 10i. The projection of --bad-tx is
-     labelled red; the exendin-3 locus of panel C is boxed. One pair of tracks per HelCha
-     contig (the assembly may split the interval).
+  A  The HelCha exendin-3 locus, exon by exon, 5' -> 3': every TOGA2 projection over the
+     curated exons (status, protein length; exons the curated model lacks outlined red,
+     with their size) above the curated model (--rescued; CDS from the genome translation
+     of panel C). Dashed lines carry the curated exon ends through the TOGA2 rows. A line
+     says so when no other isoform of --ref-gene projected here.
   B  The cause, in the HelSus reference: every transcript of --ref-gene in the EviAnn GFF,
-     exon by exon, 5' -> 3'. Exons of --bad-tx that no other isoform has are outlined red.
-     Thin box = UTR, tall box = CDS.
+     exon by exon, 5' -> 3', on the same bp scale as A. Exons of --bad-tx that no other
+     isoform has are outlined red. Thin box = UTR, tall box = CDS.
   C  The evidence that exendin-3 is at the curated locus: the HelCha genome itself is read
      at the curated exons (--rescued, from lib_rescue_locus.py), spliced, translated, and
      aligned residue by residue to the published precursor (--published, P20394). Each
@@ -29,7 +30,6 @@ Standard library only; read-only on its inputs. SVG, and PDF / PNG through rsvg-
 
 Usage
   python3 10j_plot_helcha_transcript_issue.py --species HelCha \
-      --genes ../synteny_toga2/interval/interval_HelSus_genes.tsv \
       --toga2 ${TOGADIR}/target_HelSus/query_HelCha --ref-gff ${HELSUS_EVIANN_GFF} \
       --names names/names.tsv --ref-gene LOC_00012325 --bad-tx LOC_00012325-mRNA-2 \
       --rescued rescued/HelCha_Ex3.exons.tsv --rescued-cds rescued/HelCha_Ex3.cds.fa \
@@ -228,23 +228,21 @@ def gene_track(body, feats, y, X, lo, hi, fs, gene_h, x0, x1, fill_of, flip, bol
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--species", default="HelCha")
-    ap.add_argument("--genes", required=True, help="3c --genes-out of the HelSus run (interval_HelSus_genes.tsv)")
     ap.add_argument("--toga2", required=True, help="target_HelSus/query_<species>")
     ap.add_argument("--ref-gff", required=True, help="the EviAnn GFF TOGA2 projected (HelSus)")
-    ap.add_argument("--names", required=True, help="10f names/names.tsv")
+    ap.add_argument("--names", help="10f names/names.tsv (puts the curated name on the model)")
     ap.add_argument("--ref-gene", default="LOC_00012325")
     ap.add_argument("--bad-tx", default="LOC_00012325-mRNA-2")
     ap.add_argument("--rescued", required=True, help="lib_rescue_locus.py <name>.exons.tsv")
     ap.add_argument("--rescued-cds", help="<name>.cds.fa: picks the CDS in the spliced genome "
                                           "(default: the longest ORF, as lib_rescue_locus.py)")
-    ap.add_argument("--genome", required=True, help="the HelCha genome FASTA (indexed: <genome>.fai)")
-    ap.add_argument("--genome-contig", help="the contig's name in the genome FASTA "
-                                            "(default: TOGA2's name with __1 read as .1)")
+    ap.add_argument("--genome", required=True, help="the genome FASTA of --species (indexed: <genome>.fai)")
+    ap.add_argument("--genome-contig", help="the locus contig's name in the genome FASTA "
+                                            "(default: TOGA2's contig over the curated exons, __1 read as .1)")
     ap.add_argument("--published", required=True, help="FASTA with the published precursor (4_reference_peptides.fa)")
     ap.add_argument("--published-id", default="EXENDIN3_precursor", help="its record (first field of the header)")
     ap.add_argument("--mature-id", default="EXENDIN3_mature", help="mature peptide record, bracketed in C ('' for none)")
-    ap.add_argument("--flank-kb", type=float, default=1.0, help="panel B: shown beyond the transcripts")
-    ap.add_argument("--pad-kb", type=float, default=5.0, help="panel A: shown beyond the genes on each contig")
+    ap.add_argument("--flank-kb", type=float, default=1.0, help="panels A, B: shown beyond the transcripts")
     ap.add_argument("--width-mm", type=float, default=180.0)
     ap.add_argument("--font-pt", type=float, default=7.0)
     ap.add_argument("--svg"); ap.add_argument("--pdf"); ap.add_argument("--png")
@@ -254,43 +252,39 @@ def main():
     mm, fs = P.PT_PER_MM, a.font_pt
     W = a.width_mm * mm
 
-    # ---- data: panel C first (it defines the locus boxed in A) ----
+    # ---- the curated model and the TOGA2 projections over it ----
     r_ex, r_lo, r_hi, r_st = rescued_model(a.rescued)
-    r_ctg = None
-    notes = G.ref_gene_notes(a.ref_gff)
-    proj = G.load_toga2_query(a.toga2, notes, merge_bp=0)
-    # contig of the rebuilt model: the TOGA2 contig with projections over it, else from --genes
-    grows = [r for r in read_tsv(a.genes) if r["species"] == sp]
-    for c, gs in proj.items():
-        if any(overlap(r_lo, r_hi, g["start"], g["end"]) for g in gs) and any(canon(c) == canon(r["contig"]) for r in grows):
-            r_ctg = c
-    if r_ctg is None:
-        cands = {r["contig"] for r in grows if overlap(r_lo, r_hi, int(r["start"]), int(r["end"]))}
-        r_ctg = next(iter(cands), None)
-    if r_ctg is None:
-        sys.exit(f"[error] no {sp} TOGA2 gene overlaps the rebuilt model ({r_lo}-{r_hi}); check --rescued and --genes")
-    N.info(f"C: curated model on {r_ctg}:{r_lo}-{r_hi} {r_st}, {len(r_ex)} exon(s)")
-
-    loc_tx = []                                   # TOGA2 projections over the locus
-    for g in proj.get(r_ctg, []):
-        for t in g["tx"]:
-            if overlap(r_lo, r_hi, t["start"], t["end"]):
-                loc_tx.append(t)
+    proj = G.load_toga2_query(a.toga2, G.ref_gene_notes(a.ref_gff), merge_bp=0)
+    if a.genome_contig:
+        cands = [c for c in proj if canon(c) == canon(a.genome_contig)]
+    else:
+        cands = [c for c, gs in proj.items() if any(overlap(r_lo, r_hi, g["start"], g["end"]) for g in gs)]
+    if len(cands) > 1:
+        sys.exit(f"[error] TOGA2 has projections at {r_lo}-{r_hi} on several contigs ({', '.join(cands)}): "
+                 f"give the locus contig with --genome-contig")
+    r_ctg = cands[0] if cands else None
+    if r_ctg is None and not a.genome_contig:
+        sys.exit(f"[error] no TOGA2 projection overlaps the curated exons ({r_lo}-{r_hi}): give --genome-contig")
+    N.info(f"A: curated model {r_ctg or a.genome_contig}:{r_lo}-{r_hi} {r_st}, {len(r_ex)} exon(s)")
+    loc_tx = [t for g in proj.get(r_ctg, []) for t in g["tx"] if overlap(r_lo, r_hi, t["start"], t["end"])]
     loc_tx.sort(key=lambda t: (not t["id"].startswith(a.bad_tx), t["id"]))
     other_iso = sorted({t["id"] for gs in proj.values() for g in gs for t in g["tx"]
                         if t["id"].startswith(a.ref_gene + "-") and not t["id"].startswith(a.bad_tx)})
     iso_here = [t["id"] for t in loc_tx if t["id"].startswith(a.ref_gene + "-") and not t["id"].startswith(a.bad_tx)]
+    miss_of = {}
     for t in loc_tx:
         aa = bp(t["cds"]) // 3 - 1 if t["cds"] else 0
-        miss = [e for e in t["exons"] if not any(overlap(*e, s_, e_) for s_, e_, _ in r_ex)]
+        miss_of[t["id"]] = {e for e in t["exons"] if not any(overlap(*e, s_, e_) for s_, e_, _ in r_ex)}
         N.info(f"A: TOGA2 {t['id']} {t['status']} {t['start']}-{t['end']}, {len(t['exons'])} exon(s), {aa} aa"
-               + (f"; exon(s) not in the curated model: {', '.join(f'{x}-{y} ({y - x + 1} bp)' for x, y in miss)}"
-                  if miss else ""))
+               + (f"; exon(s) not in the curated model: "
+                  f"{', '.join(f'{x}-{y} ({y - x + 1} bp)' for x, y in sorted(miss_of[t['id']]))}"
+                  if miss_of[t["id"]] else ""))
     if not loc_tx:
-        N.warn(f"A: no TOGA2 projection overlaps the curated model on {r_ctg}")
+        N.warn(f"A: no TOGA2 projection overlaps the curated model")
     N.info(f"A: other {a.ref_gene} isoforms projected onto {sp}: "
            + (", ".join(other_iso) if other_iso else "none") + f"; at this locus: {', '.join(iso_here) or 'none'}")
 
+    # ---- panel B data: the reference isoforms ----
     ref_tx, ref_ctg, ref_st, ref_span = ref_transcripts(a.ref_gff, a.ref_gene)
     if not any(t[0].startswith(a.bad_tx) for t in ref_tx):
         N.warn(f"B: {a.bad_tx} is not a transcript of {a.ref_gene} in {a.ref_gff}")
@@ -302,161 +296,13 @@ def main():
                + (f"; exon(s) no other isoform has: {', '.join(f'{s}-{e} ({e - s + 1} bp)' for s, e in sorted(bad_only))}"
                   if tid.startswith(a.bad_tx) else ""))
 
-    # ---- panel A data ----
-    tq, how = T3C.read_genes(a.toga2)
-    names = [r for r in read_tsv(a.names) if r.get("species") == sp and r.get("class") not in ("GCG", "GIP")
-             and (r.get("start") or "").isdigit()]
-    by_ctg = defaultdict(list)
-    for r in grows:
-        qg = r["query_gene"]
-        tx = sorted({T3C.parse_projection(p)[0] for p in (tq or {}).get(qg, {}).get("proj", [])})
-        txs = tx[0] + (f" +{len(tx) - 1}" if len(tx) > 1 else "") if tx else ""
-        isb = r.get("boundary") == "boundary"
-        grp = r.get("group", "")
-        fam = N.is_family(grp) or grp == "proglucagon"
-        by_ctg[r["contig"]].append(dict(
-            start=int(r["start"]), end=int(r["end"]), strand=r["strand"], id=qg, group=grp,
-            kind="boundary" if isb else ("family" if fam else "other"),
-            label=(r["symbol"].split("/")[0] if isb else (f"{qg} · {txs}" if txs else qg) if fam else ""),
-            filled=r.get("status", "") in ("FI", "I", ""), dashed=qg.startswith("retro_"),
-            status=r.get("status", ""), desc=f"{r['symbol']} | {r.get('status', '')} | {', '.join(tx)}",
-            bad=any(t.startswith(a.bad_tx) for t in tx)))
-    if not by_ctg:
-        sys.exit(f"[error] no {sp} rows in {a.genes}")
-    fam_groups = sorted({f["group"] for fs_ in by_ctg.values() for f in fs_ if f["kind"] == "family"})
-    fcol = N.colour_map(fam_groups)
-
-    def fill_of(f):
-        return {"boundary": BOUNDARY, "other": OTHER, "unnamed": UNNAMED}.get(
-            f["kind"], fcol.get(f["group"]) if f["kind"] == "family" else CLASS_COL.get(f["group"], CLASS_COL["copy"]))
-
-    # ---- geometry ----
-    x0 = max(P.text_w(s, fs) for s in ("TOGA2", "curated", "HelSus reference")) + 4 * mm
-    x1 = W - 4 * mm
-    # panel A: room on the right for the rightmost rotated label of each contig, and the 'B, C' tag
-    cos_ = math.cos(math.radians(ANGLE))
-    rA = 4 * mm
-    for c, fs_ in by_ctg.items():
-        labs = [f for f in fs_ if f["label"]]
-        if labs:
-            mid = (min(f["start"] for f in fs_) + max(f["end"] for f in fs_)) / 2
-            b = {f["label"]: (f["start"] + f["end"]) / 2 for f in fs_ if f["kind"] == "boundary"}
-            fl_ = (b["SLC4A8"] > mid) if "SLC4A8" in b else (b["AQP5"] < mid) if "AQP5" in b else False
-            last = min(labs, key=lambda f: f["start"]) if fl_ else max(labs, key=lambda f: f["end"])
-            rA = max(rA, P.text_w(last["label"], fs) * cos_ + 2 * mm)
-    rA = max(rA, P.text_w("C", fs) + 3 * mm)
-    x1A = W - rA
-    body, y = [], 0.0
-
-    def heading(letter, text):
-        nonlocal y
-        y += fs * 1.6
-        body.append(f'<text x="0" y="{y:.2f}" font-size="{fs + 1:.1f}" font-weight="bold">{letter}</text>'
-                    f'<text x="{fs * 1.4:.2f}" y="{y:.2f}" font-size="{fs:.1f}" font-weight="bold">{esc(text)}</text>')
-        y += fs * 0.6
-
-    # panel A: one block per contig, shared scale
-    heading("A", f"{sp} SLC4A8–AQP5 interval: TOGA2 (HelSus reference) and curated names")
-    wins = {}
-    for c, fs_ in by_ctg.items():
-        lo = min(f["start"] for f in fs_) - int(a.pad_kb * 1000)
-        hi = max(f["end"] for f in fs_) + int(a.pad_kb * 1000)
-        b = {f["label"]: (f["start"] + f["end"]) / 2 for f in fs_ if f["kind"] == "boundary"}
-        mid = (lo + hi) / 2
-        flip = (b["SLC4A8"] > mid) if "SLC4A8" in b else (b["AQP5"] < mid) if "AQP5" in b else False
-        wins[c] = (max(1, lo), hi, flip)
-    scaleA = (x1A - x0) / max(hi - lo for lo, hi, _ in wins.values())
-    order = sorted(wins, key=lambda c: (not any(f["kind"] == "boundary" and f["label"] == "SLC4A8" for f in by_ctg[c]), c))
-    for c in order:
-        lo, hi, flip = wins[c]
-        span = (hi - lo) * scaleA
-        labs = {f["label"] for f in by_ctg[c] if f["kind"] == "boundary"}
-        # as step 2: a contig with only AQP5 is right-aligned, everything else left-aligned
-        xa0, xa1 = (x1A - span, x1A) if labs == {"AQP5"} else (x0, x0 + span)
-
-        def X(p, lo=lo, hi=hi, flip=flip, xa0=xa0, xa1=xa1):
-            r = (p - lo) / (hi - lo)
-            return xa1 - r * (xa1 - xa0) if flip else xa0 + r * (xa1 - xa0)
-        feats = by_ctg[c]
-        nm = []
-        for r in names:
-            if canon(r["contig"]) != canon(c):
-                continue
-            s, e = int(r["start"]), int(r["end"])
-            hit = sorted((f for f in feats if overlap(s, e, f["start"], f["end"])), key=lambda f: -overlap(s, e, f["start"], f["end"]))
-            nm.append(dict(start=s, end=e, strand=hit[0]["strand"] if hit else "", kind="named", group=r["class"],
-                           label=F10I.short_name(r["new_name"], sp), id=r["new_name"], filled=True, desc=r.get("rule", "")))
-        for f in feats:
-            if f["kind"] == "family" and not any(overlap(f["start"], f["end"], n["start"], n["end"]) for n in nm):
-                nm.append(dict(f, kind="unnamed", label="", filled=False))
-        nm += [dict(f) for f in feats if f["kind"] == "boundary"]
-        ytop = y
-        body.append(f'<text x="{xa0:.2f}" y="{y + fs:.2f}" font-size="{fs:.1f}" fill="#555">{esc(c)}'
-                    f'{" (reversed)" if flip else ""}</text>')
-        y += fs * 1.2
-        yg1, yb1 = gene_track(body, feats, y, X, lo, hi, fs, 2.4 * mm, xa0, xa1, fill_of, flip, bold_kinds=())
-        body.append(f'<text x="{x0 - 2 * mm:.2f}" y="{yg1 + fs * 0.35:.2f}" font-size="{fs:.1f}" text-anchor="end">TOGA2</text>')
-        yg2, yb2 = gene_track(body, nm, yb1 + fs * 0.4, X, lo, hi, fs, 2.4 * mm, xa0, xa1, fill_of, flip)
-        body.append(f'<text x="{x0 - 2 * mm:.2f}" y="{yg2 + fs * 0.35:.2f}" font-size="{fs:.1f}" text-anchor="end">curated</text>')
-        for n in nm:                                   # bands
-            if n["kind"] == "named":
-                p, q = sorted((X(n["start"]), X(n["end"] + 1)))
-                w = max(q - p, 0.8)
-                body.insert(0, f'<rect x="{(p + q) / 2 - w / 2:.2f}" y="{ytop + fs * 1.4:.2f}" width="{w:.2f}" '
-                               f'height="{yb2 - ytop - fs * 1.2:.2f}" fill="{fill_of(n)}" fill-opacity="0.12"/>')
-        if canon(c) == canon(r_ctg):                   # box the panel-C locus
-            p, q = sorted((X(r_lo), X(r_hi + 1)))
-            p, q = p - 1.2 * mm, q + 1.2 * mm
-            body.append(f'<rect x="{p:.2f}" y="{yg1 - 2.2 * mm:.2f}" width="{q - p:.2f}" height="{yg2 - yg1 + 4.4 * mm:.2f}" '
-                        f'fill="none" stroke="#000" stroke-width="0.6" stroke-dasharray="2,1"/>'
-                        f'<text x="{q + 0.8:.2f}" y="{yg2 + 2.2 * mm:.2f}" font-size="{fs:.1f}" font-weight="bold">C</text>')
-        y = yb2 + fs * 0.8
-    sbA = P.nice_scale((x1A - x0) / scaleA)
-    body.append(f'<line x1="{x0:.2f}" y1="{y:.2f}" x2="{x0 + sbA * scaleA:.2f}" y2="{y:.2f}" stroke="#000" stroke-width="0.7"/>'
-                f'<text x="{x0 + sbA * scaleA + 1.5 * mm:.2f}" y="{y + fs * 0.35:.2f}" font-size="{fs:.1f}">{P.fmt_kb(sbA)}</text>')
-    y += fs * 0.8
-
-    # panel B: exon level, 5' -> 3'
-    fl = int(a.flank_kb * 1000)
-    b_lo = min(s for _, ex, _ in ref_tx for s, _ in ex) - fl
-    b_hi = max(e for _, ex, _ in ref_tx for _, e in ex) + fl
-    lab_w = max(P.text_w(f"{t} · 999 aa", fs) for t, _, _ in ref_tx) + 2 * mm
-    xs0, xs1 = x0, x1 - lab_w
-    scaleB = (xs1 - xs0) / (b_hi - b_lo)
-    h = 2.6 * mm
-    rowh = fs * 2.3
-
-    def XB(p):
-        return xs0 + ((b_hi - p) if ref_st == "-" else (p - b_lo)) * scaleB
-
-    heading("B", f"Cause: HelSus reference {a.ref_gene} (EviAnn), every isoform; red = exon only {a.bad_tx} has")
-    y += fs * 0.6
-    for tid, ex, cds in ref_tx:
-        y += rowh / 2
-        isbad = tid.startswith(a.bad_tx)
-        transcript(body, y, ex, cds, XB, h, BAD if isbad else "#4D4D4D", red=bad_only if isbad else (), title=tid)
-        aa = bp(cds) // 3 - 1 if cds else 0
-        xe = max(XB(v) for s_, e_ in ex for v in (s_, e_ + 1))
-        body.append(f'<text x="{xe + 1.5 * mm:.2f}" y="{y + fs * 0.35:.2f}" font-size="{fs:.1f}">{esc(tid)}'
-                    f'{f" · {aa} aa" if aa else ""}</text>')
-        for s_, e_ in (bad_only if isbad else ()):
-            body.append(f'<text x="{(XB(s_) + XB(e_ + 1)) / 2:.2f}" y="{y - h / 2 - 1:.2f}" font-size="{fs - 1:.1f}" '
-                        f'fill="{BAD}" text-anchor="middle">{e_ - s_ + 1} bp</text>')
-        y += rowh / 2
-    body.append(f'<text x="{x0 - 2 * mm:.2f}" y="{y - rowh * len(ref_tx) / 2 + fs * 0.35:.2f}" font-size="{fs:.1f}" '
-                f'text-anchor="end">HelSus reference</text>')
-    y += fs * 0.2
-    sb = P.nice_scale((xs1 - xs0) / scaleB)
-    body.append(f'<line x1="{xs0:.2f}" y1="{y:.2f}" x2="{xs0 + sb * scaleB:.2f}" y2="{y:.2f}" stroke="#000" stroke-width="0.7"/>'
-                f'<text x="{xs0 + sb * scaleB + 1.5 * mm:.2f}" y="{y + fs * 0.35:.2f}" font-size="{fs:.1f}">'
-                f'{P.fmt_kb(sb)} · 5′ → 3′ · thin = UTR, thick = CDS</text>')
-    y += fs * 0.8
-
+    # ---- panel C data: the genome read at the curated exons (also gives the curated CDS for A) ----
+    r_ctg_name = r_ctg or a.genome_contig
     # panel C: the genome, read at the curated exons, translated and aligned to the published precursor
     fai = read_fai(a.genome)
     gctg = a.genome_contig or re.sub(r"__(\d+)$", r".\1", r_ctg)
     if gctg not in fai:
-        alt = [k for k in fai if canon(k) == canon(r_ctg)]
+        alt = [k for k in fai if canon(k) == canon(r_ctg_name)]
         if not alt:
             sys.exit(f"[error] {gctg} is not in {a.genome}.fai; give its name with --genome-contig")
         gctg = alt[0]
@@ -506,6 +352,111 @@ def main():
                f"coding bases {gctg}:{ex_cds[n_][0]}-{ex_cds[n_][1]} ({r_st})")
     msplit = sum(res_split)
 
+    r_cds = sorted(ex_cds.values())
+    names = [r for r in read_tsv(a.names) if r.get("species") == sp] if a.names else []
+    nm_here = [r["new_name"] for r in names if (r.get("start") or "").isdigit()
+               and canon(r["contig"]) in (canon(r_ctg_name), canon(gctg))
+               and overlap(r_lo, r_hi, int(r["start"]), int(r["end"]))]
+
+    # ---- geometry: A and B share one bp scale, both 5' -> 3' ----
+    x0 = max(P.text_w(t, fs) for t in ("TOGA2", "curated", "HelSus reference")) + 4 * mm
+    x1 = W - 4 * mm
+    fl = int(a.flank_kb * 1000)
+    a_lo = min([r_lo] + [t["start"] for t in loc_tx]) - fl
+    a_hi = max([r_hi] + [t["end"] for t in loc_tx]) + fl
+    b_lo = min(s_ for _, ex, _ in ref_tx for s_, _ in ex) - fl
+    b_hi = max(e_ for _, ex, _ in ref_tx for _, e_ in ex) + fl
+    cur_lab = f"{nm_here[0] if nm_here else 'curated model'} · {len(prot)} aa"
+    rlabels = ([f"{t['id'].split('#')[0]} · TOGA2 {t['status']} · 999 aa" for t in loc_tx] + [cur_lab]
+               + [f"{t} · 999 aa" for t, _, _ in ref_tx])
+    lab_w = min(max(P.text_w(t, fs) for t in rlabels) + 2 * mm, 75 * mm)
+    xs0, xs1 = x0, x1 - lab_w
+    scale = (xs1 - xs0) / max(a_hi - a_lo, b_hi - b_lo)
+    h = 2.6 * mm
+    rowh = fs * 2.3
+    body, y = [], 0.0
+
+    def heading(letter, text):
+        nonlocal y
+        y += fs * 1.6
+        body.append(f'<text x="0" y="{y:.2f}" font-size="{fs + 1:.1f}" font-weight="bold">{letter}</text>'
+                    f'<text x="{fs * 1.4:.2f}" y="{y:.2f}" font-size="{fs:.1f}" font-weight="bold">{esc(text)}</text>')
+        y += fs * 0.6
+
+    def mkX(lo, hi, strand):
+        return (lambda p: xs0 + (hi - p) * scale) if strand == "-" else (lambda p: xs0 + (p - lo) * scale)
+
+    # ---- panel A: the locus, TOGA2 against curated ----
+    heading("A", f"{sp} exendin-3 locus: TOGA2 projection and curated model; red = TOGA2 exon the curated model lacks")
+    XA = mkX(a_lo, a_hi, r_st)
+    y += fs * 0.6
+    ya0 = y
+    rows_t = 0
+    for t in loc_tx:
+        y += rowh / 2
+        isbad = t["id"].startswith(a.bad_tx)
+        red = miss_of[t["id"]]
+        transcript(body, y, t["exons"], t["cds"], XA, h, BAD if isbad else "#E69F00", red=red,
+                   dashed=t["status"] not in ("FI", "I"), title=t["id"])
+        for s_, e_ in sorted(red):
+            body.append(f'<text x="{(XA(s_) + XA(e_ + 1)) / 2:.2f}" y="{y - h / 2 - 1:.2f}" font-size="{fs - 1:.1f}" '
+                        f'fill="{BAD}" text-anchor="middle">{e_ - s_ + 1} bp</text>')
+        aa = bp(t["cds"]) // 3 - 1 if t["cds"] else 0
+        xe = max(XA(v) for s_, e_ in t["exons"] for v in (s_, e_ + 1))
+        body.append(f'<text x="{xe + 1.5 * mm:.2f}" y="{y + fs * 0.35:.2f}" font-size="{fs:.1f}">'
+                    f'{esc(t["id"].split("#")[0])} · TOGA2 {esc(t["status"])}{f" · {aa} aa" if aa else ""}</text>')
+        y += rowh / 2
+        rows_t += 1
+    if not iso_here:
+        y += rowh / 2
+        xn = max(XA(v) for s_, e_, _ in r_ex for v in (s_, e_ + 1)) + 1.5 * mm
+        body.append(f'<text x="{xn:.2f}" y="{y + fs * 0.35:.2f}" font-size="{fs - 0.5:.1f}" font-style="italic" '
+                    f'fill="#555">{esc(", ".join(sorted({re.sub(r"#.*$", "", i) for i in other_iso})) or "other " + a.ref_gene + " isoforms")}'
+                    f': no TOGA2 projection here</text>')
+        y += rowh / 2
+        rows_t += 1
+    if rows_t:
+        body.append(f'<text x="{x0 - 2 * mm:.2f}" y="{ya0 + rowh * rows_t / 2 + fs * 0.35:.2f}" font-size="{fs:.1f}" '
+                    f'text-anchor="end">TOGA2</text>')
+    y += rowh / 2
+    transcript(body, y, [(s_, e_) for s_, e_, _ in r_ex], r_cds, XA, h, CLASS_COL["copy"], title="curated")
+    xe = max(XA(v) for s_, e_, _ in r_ex for v in (s_, e_ + 1))
+    body.append(f'<text x="{xe + 1.5 * mm:.2f}" y="{y + fs * 0.35:.2f}" font-size="{fs:.1f}" font-weight="bold">'
+                f'{esc(cur_lab)}</text>'
+                f'<text x="{x0 - 2 * mm:.2f}" y="{y + fs * 0.35:.2f}" font-size="{fs:.1f}" text-anchor="end">curated</text>')
+    for s_, e_, _ in r_ex:                         # curated exon boundaries, through the TOGA2 rows
+        for v in (XA(s_), XA(e_ + 1)):
+            body.insert(0, f'<line x1="{v:.2f}" y1="{ya0:.2f}" x2="{v:.2f}" y2="{y:.2f}" stroke="#9A9A9A" '
+                           f'stroke-width="0.3" stroke-dasharray="1,1"/>')
+    y += rowh / 2 + fs * 0.4
+
+    # ---- panel B: the cause ----
+    heading("B", f"Cause: HelSus reference {a.ref_gene} (EviAnn), every isoform; red = exon only {a.bad_tx} has")
+    XB = mkX(b_lo, b_hi, ref_st)
+    y += fs * 0.6
+    for tid, ex, cds in ref_tx:
+        y += rowh / 2
+        isbad = tid.startswith(a.bad_tx)
+        transcript(body, y, ex, cds, XB, h, BAD if isbad else "#4D4D4D", red=bad_only if isbad else (), title=tid)
+        aa = bp(cds) // 3 - 1 if cds else 0
+        xe = max(XB(v) for s_, e_ in ex for v in (s_, e_ + 1))
+        body.append(f'<text x="{xe + 1.5 * mm:.2f}" y="{y + fs * 0.35:.2f}" font-size="{fs:.1f}">{esc(tid)}'
+                    f'{f" · {aa} aa" if aa else ""}</text>')
+        for s_, e_ in (bad_only if isbad else ()):
+            body.append(f'<text x="{(XB(s_) + XB(e_ + 1)) / 2:.2f}" y="{y - h / 2 - 1:.2f}" font-size="{fs - 1:.1f}" '
+                        f'fill="{BAD}" text-anchor="middle">{e_ - s_ + 1} bp</text>')
+        y += rowh / 2
+    body.append(f'<text x="{x0 - 2 * mm:.2f}" y="{y - rowh * len(ref_tx) / 2 + fs * 0.35:.2f}" font-size="{fs:.1f}" '
+                f'text-anchor="end">HelSus reference</text>')
+    y += fs * 0.2
+    sb = P.nice_scale((xs1 - xs0) / scale)
+    body.append(f'<line x1="{xs0:.2f}" y1="{y:.2f}" x2="{xs0 + sb * scale:.2f}" y2="{y:.2f}" stroke="#000" stroke-width="0.7"/>'
+                f'<text x="{xs0 + sb * scale + 1.5 * mm:.2f}" y="{y + fs * 0.35:.2f}" font-size="{fs:.1f}">'
+                f'{P.fmt_kb(sb)} (A, B) · 5′ → 3′ · thin = UTR, thick = CDS · dashed lines = curated exon ends'
+                f'</text>')
+    y += fs * 0.8
+
+    # ---- panel C: the evidence ----
     gl = f"{sp} genome, curated exons"
     x0c = max(x0, max(P.text_w(plab, fs), P.text_w(gl, fs)) + 4 * mm)
     ncol = len(A_)

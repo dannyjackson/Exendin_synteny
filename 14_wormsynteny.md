@@ -108,7 +108,7 @@ python3 ${SCRIPTDIR}/14a_wormsynteny_tables.py --genomes ${GENOMES} --lift ${LIF
     --frag-dir frags --pair-dir pairs --species-table ../species_toga2.tsv \
     --gap ${GAP} --extras --out wormsynteny 2> wormsynteny_tables.log
 cat wormsynteny_tables.log
-
+ 
 mamba activate genespace_env
 Rscript ${SCRIPTDIR}/14b_plot_wormsynteny.R --in wormsynteny --out wormsynteny_region \
     --width 10 --height 7

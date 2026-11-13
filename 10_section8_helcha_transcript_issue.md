@@ -11,20 +11,20 @@ Section 1 excludes `mRNA-2` and 1b rebuilds the locus from the published *H. hor
 
 | Panel | Shows |
 |---|---|
-| **A** | HelCha's SLC4A8–AQP5 interval: TOGA2's genes (HelSus reference) above the curated names (`names.tsv`), as in section 7. One pair of tracks per HelCha contig. The `mRNA-2` projection's label is red, and the curated exendin-3 locus is boxed (**C**). |
-| **B** (cause) | Every isoform of `LOC_00012325` in the HelSus reference, exon by exon, 5′ → 3′. The exon only `mRNA-2` has is outlined red, with its size. |
+| **A** (the error) | The HelCha exendin-3 locus, exon by exon, 5′ → 3′: every TOGA2 projection over the curated exons, with status and protein length, above the curated model with its name from `names.tsv`. TOGA2 exons the curated model lacks are outlined red, with their size. Dashed lines carry the curated exon ends up through the TOGA2 rows, so every boundary difference shows. A line says so when `mRNA-1` has no projection there. |
+| **B** (cause) | Every isoform of `LOC_00012325` in the HelSus reference, exon by exon, 5′ → 3′, on the **same bp scale as A**. The exon only `mRNA-2` has is outlined red, with its size. Its position matches the red exon of A directly above. |
 | **C** (evidence) | The HelCha **genome itself**, read at the curated exons, spliced, translated, and aligned residue by residue to the published exendin-3 precursor (P20394). Differences are red and the mature exendin-3 is bracketed. Each residue sits on the colour of its exon, and codons split by an intron are underlined. Below the alignment, each exon's residues and genomic coordinates are listed. |
 
+The curated model's CDS in A comes from the same genome translation as panel C.
 Panel C translates the genome, not the 1b output file. It reads the exon coordinates of
 `rescued/HelCha_Ex3.exons.tsv` from the genome FASTA (through its `.fai` index; samtools is
 not needed), so every residue in the figure traces to a base on `JANEZZ010000386.1`.
 
 ```
 cd ${WORK}/toga2_exendin_tree
-GENES=../synteny_toga2/interval/interval_HelSus_genes.tsv      # step 3 (3c --genes-out)
 HELCHA_FASTA=$(ls ${GENOMEDIR}/HelCha_GCA_026122225.1/ncbi_dataset/data/GCA_026122225.1/*_genomic.fna)
 python3 ${SCRIPTDIR}/10j_plot_helcha_transcript_issue.py --species HelCha \
-    --genes ${GENES} --toga2 ${TOGADIR}/target_HelSus/query_HelCha \
+    --toga2 ${TOGADIR}/target_HelSus/query_HelCha \
     --ref-gff ${HELSUS_EVIANN_GFF} --names names/names.tsv \
     --ref-gene LOC_00012325 --bad-tx LOC_00012325-mRNA-2 \
     --rescued rescued/HelCha_Ex3.exons.tsv --rescued-cds rescued/HelCha_Ex3.cds.fa \
@@ -55,12 +55,12 @@ The log reads like this, and every number in it should match sections 1 and 1b:
   panel C. Exon 1 should include 4,399,218–4,399,326 (section 1b).
 
 Options:
-- `--genome-contig` is the contig's name in the FASTA. The default reads TOGA2's
-  `JANEZZ010000386__1` as `JANEZZ010000386.1`.
+- `--genome-contig` is the contig's name in the FASTA. It also picks TOGA2's contig
+  (`JANEZZ010000386__1` = `JANEZZ010000386.1`). Without it, the TOGA2 contig with
+  projections over the curated exons is used, and the script stops if there are several.
 - `--published-id` / `--mature-id` (`EXENDIN3_precursor` / `EXENDIN3_mature`) choose the
   records in `4_reference_peptides.fa`. Use `--mature-id ''` for no bracket.
-- `--flank-kb` (1) sets how far B extends past the transcripts, and `--pad-kb` (5) the
-  margin around the genes in A.
+- `--flank-kb` (1) sets how far A and B extend past the transcripts.
 - `--width-mm` and `--font-pt` work as in the other figures. The alignment wraps onto
   further lines if it does not fit.
 
@@ -70,3 +70,6 @@ For another genome or gene, change `--species`, `--toga2`, `--ref-gene`, `--bad-
 | File | Content |
 |---|---|
 | `helcha_transcript_issue.{svg,pdf,png}` | the three-panel figure |
+
+The full interval for HelCha, with every TOGA2 gene and the curated names, is in the
+step-5 figure (`exendin_figure.pdf`, panel A).
