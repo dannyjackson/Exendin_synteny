@@ -3,9 +3,9 @@
 One figure of the HelSus SLC4A8-AQP5 interval, drawn three times in three nomenclatures,
 on one shared coordinate axis:
 
-  A  the genome's own annotations, original names: one track per --gff (EviAnn, the
-     reference TOGA2 projected; NCBI RefSeq). Exendin-family genes are labelled with that
-     annotation's own ID and description.
+  A  the genome's own annotation, original names: the EviAnn annotation TOGA2 projected
+     from (one track per --gff; give more than one to compare annotations). Exendin-family
+     genes are labelled with the annotation's own ID and description.
   B  TOGA2 with HelSus as both reference and query (target_HelSus/query_HelSus, the
      self-projection): every TOGA2 query gene, labelled in TOGA2's nomenclature, i.e. its
      query-gene ID and the reference transcript(s) it was projected from.
@@ -17,8 +17,8 @@ A faint vertical band runs from each C locus up through A and B, so the three na
 one locus line up. --crosswalk writes the same correspondence as a table: for each named
 locus, the overlapping gene IDs of every annotation.
 
-Coordinates are TOGA2's (= EviAnn's: chr2). Another GFF whose sequences are named
-differently (NCBI: NC_139459.1) is matched through the NCBI sequence report next to it
+Coordinates are TOGA2's (= EviAnn's: chr2). An extra GFF whose sequences are named
+differently (e.g. NCBI: NC_139459.1) is matched through the NCBI sequence report next to it
 (sequence_report.jsonl, as 10g), or --chrom-map chr2=NC_139459.1.
 
 The view runs from SLC4A8 to AQP5 (SLC4A8 on the left; the axis is flipped if SLC4A8 lies
@@ -35,7 +35,7 @@ SVG; PDF and PNG through rsvg-convert. Standard library only; read-only on its i
 
 Usage
   python3 10i_plot_helsus_nomenclature.py \
-      --gff EviAnn=${HELSUS_EVIANN_GFF} --gff "NCBI RefSeq=${HELSUS_NCBI_GFF}" \
+      --gff EviAnn=${HELSUS_EVIANN_GFF} \
       --toga2 ${TOGADIR}/target_HelSus/query_HelSus --names names/names.tsv \
       --boundaries SLC4A8,AQP5=LOC_00012326 \
       --svg helsus_nomenclature.svg --pdf helsus_nomenclature.pdf --png helsus_nomenclature.png \
@@ -272,7 +272,8 @@ def main():
     bfeats = [dict(start=b[1], end=b[2], strand=b[3], kind=n, group=n, label=n, id=b[4], filled=True,
                    dashed=False, status="", desc="") for n, b in bnd.items()]
     named = names_track(a.names, a.species, contig, lo, hi, bfeats, toga)
-    panels = [("A", "Genome annotations, original names", tracksA),
+    panels = [("A", "Genome annotation, original names" if len(tracksA) == 1 else "Genome annotations, original names",
+               tracksA),
               ("B", f"TOGA2 projection, {a.species} reference onto {a.species} (target_{a.species}/query_{a.species})",
                [("TOGA2", toga)]),
               ("C", "Names from the gene tree (step 10)", [("step 10", named)])]

@@ -54,7 +54,7 @@ LIFT=../synteny_cactus/hal_lift
 GENOMES=../genespace_cactus/genomes.tsv
 [ -s ${GENOMES} ] || python3 ${SCRIPTDIR}/13a_hal_to_blk.py genomes --indir ${LIFT} \
     --species-tree ${SPTREE} --species-table ../species_toga2.tsv --only-listed \
-    --drop-species AnnSte,BarImb,ElgCoe --out genomes.tsv && GENOMES=genomes.tsv
+    --drop-species AnnSte,BarImb,ElgCoe --out genomes.tsv && GENOMES=../genespace_cactus/genomes.tsv
 cat ${GENOMES}
 
 # the query: the HelSus interval as BED4, as WormSynteny writes its query
